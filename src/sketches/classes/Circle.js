@@ -1,11 +1,12 @@
 class Circle {
-  constructor(p, x, y, r, z = 0) {
+  constructor(p, x, y, r, z = 0, color = [255, 0, 175, 220]) {
     this.p = p;
     this.growing = true;
     this.x = x;
     this.y = y;
     this.r = r;
     this.z = z;
+    this.color = color;
   }
 
   edges() {
@@ -30,11 +31,11 @@ class Circle {
     // Material palette — comment/uncomment a single line below to test.
     p.noStroke();
     p.shininess(80);
-    p.emissiveMaterial(255, 0, 175, 220);
-    // p.ambientMaterial(255, 0, 175, 220);
-    // p.specularMaterial(255, 0, 175, 220);
+    p.emissiveMaterial(...this.color);
+    // p.ambientMaterial(...this.color);
+    // p.specularMaterial(...this.color);
     // p.normalMaterial();
-    // p.noFill(); p.stroke(255, 0, 175, 220); p.strokeWeight(1);
+    // p.noFill(); p.stroke(...this.color); p.strokeWeight(1);
 
     const tubeRadius = Math.max(this.r * 0.12, 1);
     p.torus(this.r, tubeRadius);

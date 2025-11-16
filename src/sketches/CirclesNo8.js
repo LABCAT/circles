@@ -4,36 +4,13 @@ import '@/lib/p5.randomColor.js';
 import { Midi } from '@tonejs/midi';
 import initCapture from '@/lib/p5.capture.js';
 import Circle from "./classes/Circle.js";
+import CircleSet from "./classes/CircleSet.js";
 
 const base = import.meta.env.BASE_URL || './';
-// const audio = base + 'audio/LandscapesNo2.mp3';
-// const midi = base + 'audio/LandscapesNo2.mid';
+const audio = base + 'audio/CirclesNo8.mp3';
+const midi = base + 'audio/CirclesNo8.mid';
 
 const sketch = (p) => {
-  const circles = [];
-  const depthRange = 800;
-  let growthActive = true;
-
-  const addCircle = () => {
-    const newCircle = new Circle(
-      p,
-      p.random(p.width),
-      p.random(p.height),
-      1,
-      // 0
-      -200 + p.random(-depthRange / 2, depthRange / 2)
-    );
-    for (let i = 0; i < circles.length; i++) {
-      const other = circles[i];
-      const d = p.dist(newCircle.x, newCircle.y, other.x, other.y);
-      if (d < other.r + 4) {
-        return false;
-      }
-    }
-    circles.push(newCircle);
-    return true;
-  };
-
   /** 
    * Core audio properties
    */
@@ -44,6 +21,11 @@ const sketch = (p) => {
   p.bpm = 97;
   p.audioLoaded = false;
   p.songHasFinished = false;
+  p.circleSets = [];
+  p.circleSet = null;
+  p.currentCircleSetIndex = 0;
+  p.cameraZOffset = 0;
+  p.cameraAnimation = null;
   
   /** 
    * MIDI loading and processing
@@ -52,10 +34,8 @@ const sketch = (p) => {
   p.loadMidi = () => {
       Midi.fromUrl(midi).then((result) => {
           console.log('MIDI loaded:', result);
-          const track1 = result.tracks[0].notes; 
-          const track2 = result.tracks[1].notes; 
+          const track1 = result.tracks[1].notes; // Combinator 1 
           p.scheduleCueSet(track1, 'executeTrack1');
-          p.scheduleCueSet(track2, 'executeTrack2');
           document.getElementById("loader").classList.add("loading--complete");
           document.getElementById('play-icon').classList.add('fade-in');
           p.audioLoaded = true;
@@ -87,97 +67,93 @@ const sketch = (p) => {
    * Preload function - Loading audio and setting up MIDI
    * This runs first, before setup()
    */
-  // p.preload = () => {
-  //     p.song = p.loadSound(audio, (sound) => {
-  //         p.audioSampleRate = sound.sampleRate();
-  //         p.totalAnimationFrames = Math.floor(sound.duration() * 60);
-  //         p.loadMidi();
-  //     });
-  //     p.song.onended(() => {
-  //         p.songHasFinished = true;
-  //         if (p.canvas) {
-  //             p.canvas.classList.add('p5Canvas--cursor-play');
-  //             p.canvas.classList.remove('p5Canvas--cursor-pause');
-  //         }
-  //         if (p.captureEnabled && p.captureInProgress) {
-  //           p.captureInProgress = false;
-  //           p.downloadFrames();
-  //         }
-  //     });
-  // };
+  p.preload = () => {
+      p.song = p.loadSound(audio, (sound) => {
+          p.audioSampleRate = sound.sampleRate();
+          p.totalAnimationFrames = Math.floor(sound.duration() * 60);
+          p.loadMidi();
+      });
+      p.song.onended(() => {
+          p.songHasFinished = true;
+          if (p.canvas) {
+              p.canvas.classList.add('p5Canvas--cursor-play');
+              p.canvas.classList.remove('p5Canvas--cursor-pause');
+          }
+          if (p.captureEnabled && p.captureInProgress) {
+            p.captureInProgress = false;
+            p.downloadFrames();
+          }
+      });
+  };
 
   p.setup = () => {
     p.createCanvas(window.innerWidth, window.innerHeight, p.WEBGL);
-    p.drawingContext.lineCap = 'round';
     p.colorPalette = p.generatePalette();
-    document.getElementById("loader").classList.add("loading--complete");
-    document.getElementById('play-icon').classList.add('fade-in');
-    circles.push(
-      new Circle(
-        p,
-        p.width / 2,
-        p.height / 2,
-        Math.min(p.width, p.height) / 3,
-        0
-      )
-    );
+    
+    for (let i = 0; i < 18; i++) {
+      const color = p.colorPalette.dark[i];
+      const baseColor = [
+        p.red(color),
+        p.green(color),
+        p.blue(color),
+        220
+      ];
+      const depthOffset = -i * 2400;
+      p.circleSets.push(new CircleSet(p, baseColor, 800, depthOffset));
+    }
+    
+    p.circleSet = p.circleSets[0];
   };
 
   p.draw = () => {
+    if (p.cameraAnimation && p.song) {
+      const currentTime = p.song.currentTime();
+      const elapsed = currentTime - p.cameraAnimation.startTime;
+      const progress = Math.min(elapsed / p.cameraAnimation.duration, 1);
+      
+      const easedProgress = progress < 0.5 
+        ? 2 * progress * progress 
+        : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+      
+      p.cameraZOffset = p.lerp(p.cameraAnimation.startZ, p.cameraAnimation.targetZ, easedProgress);
+      
+      if (progress >= 1) {
+        p.cameraAnimation = null;
+      }
+    }
+
     p.background(0);
     p.ambientLight(60, 60, 60);
     p.directionalLight(255, 255, 255, 0.5, 0.5, -1);
     p.orbitControl();
     p.resetMatrix();
-    p.translate(-p.width / 2, -p.height / 2);
+    p.translate(-p.width / 2, -p.height / 2, p.cameraZOffset);
 
-    for (let i = 0; i < circles.length; i++) {
-      const c = circles[i];
-      c.show();
-
-      if (growthActive && c.growing) {
-        c.grow();
-
-        for (let j = 0; j < circles.length; j++) {
-          const other = circles[j];
-          if (other !== c) {
-            const d = p.dist(c.x, c.y, other.x, other.y);
-            if (d - 1 < c.r + other.r) {
-              c.growing = false;
-              break;
-            }
-          }
-        }
-
-        if (c.growing) {
-          c.growing = !c.edges();
-        }
-      }
-    }
-
-    if (growthActive) {
-      const target = 1 + p.constrain(p.floor(p.frameCount / 120), 0, 20);
-      let count = 0;
-
-      for (let i = 0; i < 1000; i++) {
-        if (addCircle()) {
-          count++;
-        }
-        if (count === target) {
-          break;
-        }
-      }
-
-      if (count < 1) {
-        growthActive = false;
-        console.log("finished growing");
-      }
+    if (p.circleSet) {
+      p.circleSet.update();
+      p.circleSet.show();
     }
   };
 
   p.executeTrack1 = (note) => {
-    const { durationTicks } = note;
+    const { currentCue, durationTicks, time } = note;
     const duration = (durationTicks / p.PPQ) * (60 / p.bpm);
+
+    if (duration < 0.5) {
+      p.currentCircleSetIndex = (p.currentCircleSetIndex + 1) % p.circleSets.length;
+      p.circleSet = p.circleSets[p.currentCircleSetIndex];
+      return;
+    }
+
+    const totalDepth = 2400;
+    const targetZ = p.cameraZOffset + totalDepth;
+    
+    p.cameraAnimation = {
+      startTime: time,
+      duration: duration,
+      startZ: p.cameraZOffset,
+      targetZ: targetZ
+    };
   };
 
    p.executeTrack2 = (note) => {
@@ -186,10 +162,10 @@ const sketch = (p) => {
   };
 
   p.generatePalette = () => {
-    const darkPalette = p.randomColor({ count: 12, luminosity: 'dark' });
+    const darkPalette = p.randomColor({ count: 18, luminosity: 'dark' });
     p.shuffle(darkPalette);
 
-    const lightPalette = p.randomColor({ count: 12, luminosity: 'light' });
+    const lightPalette = p.randomColor({ count: 18, luminosity: 'light' });
     p.shuffle(lightPalette);
 
     return { dark: darkPalette, light: lightPalette };
@@ -216,7 +192,6 @@ const sketch = (p) => {
           document.getElementById("play-icon").classList.remove("fade-in");
           p.song.play();
           p.showingStatic = false;
-          p.currentLandscapes = p.landscapes[0];
           p.canvas.classList.add('p5Canvas--cursor-pause');
           p.canvas.classList.remove('p5Canvas--cursor-play');
       }
