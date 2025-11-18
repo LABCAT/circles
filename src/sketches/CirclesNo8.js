@@ -3,7 +3,6 @@ import "p5/lib/addons/p5.sound";
 import '@/lib/p5.randomColor.js';
 import { Midi } from '@tonejs/midi';
 import initCapture from '@/lib/p5.capture.js';
-import Circle from "./classes/Circle.js";
 import CircleSet from "./classes/CircleSet.js";
 
 const base = import.meta.env.BASE_URL || './';
@@ -88,10 +87,12 @@ const sketch = (p) => {
 
   p.setup = () => {
     p.createCanvas(window.innerWidth, window.innerHeight, p.WEBGL);
+    p.canvas.style.position = 'relative';
+    p.canvas.style.zIndex = '1';
     p.colorPalette = p.generatePalette();
     
-    for (let i = 0; i < 18; i++) {
-      const color = p.colorPalette.dark[i];
+    for (let i = 0; i < 19; i++) {
+      const color = i ===  18 ? p.colorPalette.dark[0] : p.colorPalette.dark[i];
       const baseColor = [
         p.red(color),
         p.green(color),
@@ -122,7 +123,8 @@ const sketch = (p) => {
       }
     }
 
-    p.background(0);
+    p.background(0, 0);
+    
     p.ambientLight(60, 60, 60);
     p.directionalLight(255, 255, 255, 0.5, 0.5, -1);
     p.orbitControl();
@@ -138,6 +140,9 @@ const sketch = (p) => {
   p.executeTrack1 = (note) => {
     const { currentCue, durationTicks, time } = note;
     const duration = (durationTicks / p.PPQ) * (60 / p.bpm);
+
+    console.log(currentCue);
+    
 
     if (duration < 0.5) {
       p.currentCircleSetIndex = (p.currentCircleSetIndex + 1) % p.circleSets.length;
@@ -220,5 +225,58 @@ const sketch = (p) => {
   };
 
 };
+
+const generateGalaxyGradient = () => {
+  const keyColors = [
+    { r: 0, g: 0, b: 0 },           // Deep black
+    { r: 10, g: 5, b: 30 },         // Deep purple-black
+    { r: 20, g: 10, b: 60 },        // Rich purple
+    { r: 40, g: 20, b: 100 },       // Vibrant purple
+    { r: 80, g: 40, b: 150 },       // Magenta-purple
+    { r: 120, g: 60, b: 200 },      // Bright purple
+    { r: 150, g: 100, b: 255 },     // Light purple-blue
+    { r: 100, g: 150, b: 255 },     // Cyan-blue
+    { r: 0, g: 200, b: 255 },       // Bright cyan
+    { r: 0, g: 255, b: 255 },       // Pure cyan
+    { r: 255, g: 0, b: 200 },       // Hot pink
+    { r: 200, g: 0, b: 150 },       // Deep magenta
+    { r: 100, g: 0, b: 100 },       // Dark magenta
+  ];
+  
+  const selectedColors = [];
+  const numKeyColors = 5 + Math.floor(Math.random() * 4);
+  
+  for (let i = 0; i < numKeyColors; i++) {
+    selectedColors.push(keyColors[Math.floor(Math.random() * keyColors.length)]);
+  }
+  
+  const numStops = 40 + Math.floor(Math.random() * 20);
+  const stops = [];
+  
+  for (let i = 0; i < numStops; i++) {
+    const t = i / (numStops - 1);
+    const colorIndex = t * (selectedColors.length - 1);
+    const colorIndexFloor = Math.floor(colorIndex);
+    const colorIndexCeil = Math.min(colorIndexFloor + 1, selectedColors.length - 1);
+    const localT = colorIndex - colorIndexFloor;
+    
+    const color1 = selectedColors[colorIndexFloor];
+    const color2 = selectedColors[colorIndexCeil];
+    
+    const r = Math.round(color1.r + (color2.r - color1.r) * localT);
+    const g = Math.round(color1.g + (color2.g - color1.g) * localT);
+    const b = Math.round(color1.b + (color2.b - color1.b) * localT);
+    
+    const alpha = 0.85 + Math.sin(t * Math.PI) * 0.15;
+    const position = t * 100;
+    
+    const colorStr = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
+    stops.push(`${colorStr} ${position.toFixed(2)}%`);
+  }
+  
+  return `linear-gradient(180deg, ${stops.join(', ')})`;
+};
+
+document.documentElement.style.setProperty('--gradient-bg', generateGalaxyGradient());
 
 new p5(sketch);
