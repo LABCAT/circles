@@ -17,6 +17,7 @@ body {
     inset: 0;
     z-index: 1;
     background: var(--gradient-bg);
+    background-blend-mode: var(--gradient-blend-mode);
     transform: rotate(-180deg);
     transition: opacity 3s;
     opacity: 1;
@@ -45,6 +46,7 @@ body {
     position: relative;
     z-index: 1;
     background: var(--gradient-bg);
+    background-blend-mode: var(--gradient-blend-mode);
 }
 
 .p5Canvas--cursor-play {
