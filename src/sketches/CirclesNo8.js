@@ -147,6 +147,22 @@ const sketch = (p) => {
     }
   };
 
+  p.resetAnimation = () => {
+    p.patternIndex = 0;
+    p.patternCircles = [];
+    p.patternPositions = [];
+    p.currentPattern = null;
+    p.previousPattern = null;
+    p.cameraZOffset = 0;
+    p.cameraAnimation = null;
+    p.currentCircleSetIndex = 0;
+    p.circleSet = p.circleSets[0];
+    p.songHasFinished = false;
+    if (p.song) {
+      p.song.stop();
+    }
+  };
+
   p.executeTrack1 = (note) => {
     const { currentCue, durationTicks, time } = note;
     const duration = (durationTicks / p.PPQ) * (60 / p.bpm);
@@ -215,7 +231,7 @@ const sketch = (p) => {
         if (sizeType === 'large') {
           circleRadius = mainCircleRadius * 0.4;
         } else if (sizeType === 'small') {
-          circleRadius = mainCircleRadius * 0.15;
+          circleRadius = mainCircleRadius * 0.1;
         } else {
           circleRadius = mainCircleRadius * 0.25;
         }
@@ -255,7 +271,7 @@ const sketch = (p) => {
       case 'spiral': {
         const minCanvasSize = Math.min(p.width, p.height);
         const baseRadius = minCanvasSize * 0.05;
-        const scaleFactor = minCanvasSize * 0.05;
+        const scaleFactor = minCanvasSize * 0.035;
         
         for (let i = 0; i < 8; i++) {
           const spiralAngle = i * 0.6;
@@ -285,6 +301,7 @@ const sketch = (p) => {
         p.patternPositions.push([rightVesicaX, centerY + vesicaSpacing / 2, 'medium']);
         p.patternPositions.push([rightVesicaX, centerY, 'small']);
         p.patternPositions.push([rightVesicaX, centerY, 'large']);
+        p.patternPositions = p.shuffle(p.patternPositions);
         return;
       }
       case 'seed': {
@@ -486,9 +503,7 @@ const sketch = (p) => {
           p.canvas.classList.remove('p5Canvas--cursor-pause');
       } else {
           if (parseInt(p.song.currentTime()) >= parseInt(p.song.buffer.duration)) {
-              /** 
-               * Reset animation properties here
-               */
+              p.resetAnimation();
           }
           document.getElementById("play-icon").classList.remove("fade-in");
           p.song.play();

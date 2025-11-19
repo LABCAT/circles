@@ -6,7 +6,7 @@ class Circle {
     this.y = y;
     this.r = r;
     this.z = z;
-    this.color = color || p.color(255, 0, 175, 220);
+    this.color = color || p.color(255, 0, 175, 31);
     this.isMainCircle = isMainCircle;
     
     if (!isMainCircle && p.random() < 0.3) {
@@ -21,7 +21,7 @@ class Circle {
     const p = this.p;
     p.push();
     p.colorMode(p.RGB, 255);
-    const colorArray = [p.red(this.color), p.green(this.color), p.blue(this.color), 220];
+    const colorArray = [p.red(this.color), p.green(this.color), p.blue(this.color), 31];
     p.pop();
     return colorArray;
   }
@@ -55,11 +55,11 @@ class Circle {
       p[materialFunction]();
     } else {
       p[materialFunction](...colorArray);
+      p.fill(this.getMaterialColor());
     }
 
     const tubeRadius = Math.max(this.r * 0.12, 1);
     p.torus(this.r, tubeRadius);
-    p.fill(this.color);
     p.pop();
   }
 }
