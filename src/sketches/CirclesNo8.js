@@ -4,6 +4,7 @@ import '@/lib/p5.randomColor.js';
 import { Midi } from '@tonejs/midi';
 import initCapture from '@/lib/p5.capture.js';
 import CircleSet from "./classes/CircleSet.js";
+import Circle from "./classes/Circle.js";
 
 const base = import.meta.env.BASE_URL || './';
 const audio = base + 'audio/CirclesNo8.mp3';
@@ -17,7 +18,7 @@ const sketch = (p) => {
   p.audioSampleRate = 0;
   p.totalAnimationFrames = 0;
   p.PPQ = 3840 * 4;
-  p.bpm = 97;
+  p.bpm = 88;
   p.audioLoaded = false;
   p.songHasFinished = false;
   p.circleSets = [];
@@ -25,6 +26,12 @@ const sketch = (p) => {
   p.currentCircleSetIndex = 0;
   p.cameraZOffset = 0;
   p.cameraAnimation = null;
+  p.patternCircles = [];
+  p.patternPositions = [];
+  p.patternIndex = 0;
+  p.patterns = ['circle', 'spiral', 'seed', 'vesica'];
+  p.currentPattern = null;
+  p.previousPattern = null;
   
   /** 
    * MIDI loading and processing
@@ -34,7 +41,7 @@ const sketch = (p) => {
       Midi.fromUrl(midi).then((result) => {
           console.log('MIDI loaded:', result);
           const track1 = result.tracks[1].notes; // Combinator 2 - Dance Bass Kit
-          const track2 = result.tracks[2].notes; // Combinator 3 - Vox Stack
+          const track2 = result.tracks[3].notes; // Combinator 4 - Lush Choir
           p.scheduleCueSet(track1, 'executeTrack1');
           p.scheduleCueSet(track2, 'executeTrack2');
           document.getElementById("loader").classList.add("loading--complete");
@@ -98,13 +105,7 @@ const sketch = (p) => {
     document.documentElement.style.setProperty('--gradient-blend-mode', 'hard-light, overlay, overlay, overlay, difference, difference, normal');
     
     for (let i = 0; i < 19; i++) {
-      const color = i ===  18 ? p.colorPalette.dark[0] : p.colorPalette.dark[i];
-      const baseColor = [
-        p.red(color),
-        p.green(color),
-        p.blue(color),
-        220
-      ];
+      const baseColor = i ===  18 ? p.colorPalette.dark[0] : p.colorPalette.dark[i];
       const depthOffset = -i * 2400;
       p.circleSets.push(new CircleSet(p, baseColor, 800, depthOffset));
     }
@@ -133,13 +134,16 @@ const sketch = (p) => {
     
     p.ambientLight(60, 60, 60);
     p.directionalLight(255, 255, 255, 0.5, 0.5, -1);
-    p.orbitControl();
     p.resetMatrix();
     p.translate(-p.width / 2, -p.height / 2, p.cameraZOffset);
 
     if (p.circleSet) {
       p.circleSet.update();
       p.circleSet.show();
+    }
+
+    for (let i = 0; i < p.patternCircles.length; i++) {
+      p.patternCircles[i].show();
     }
   };
 
@@ -148,6 +152,7 @@ const sketch = (p) => {
     const duration = (durationTicks / p.PPQ) * (60 / p.bpm);
 
     if (duration < 0.5) {
+      document.documentElement.style.setProperty('--gradient-bg', p.generateGalaxyGradient());
       p.currentCircleSetIndex = (p.currentCircleSetIndex + 1) % p.circleSets.length;
       p.circleSet = p.circleSets[p.currentCircleSetIndex];
       return;
@@ -164,9 +169,162 @@ const sketch = (p) => {
     };
   };
 
-   p.executeTrack2 = (note) => {
-    const { currentCue, durationTicks } = note;
+  p.executeTrack2 = (note) => {
+    const { ticks, durationTicks } = note;
     const duration = (durationTicks / p.PPQ) * (60 / p.bpm);
+
+    const beatPosition = ticks % p.PPQ;
+    const sixteenthNote = p.PPQ / 4;
+    const sixteenthNoteIndex = Math.floor(beatPosition / sixteenthNote);
+    
+    if (sixteenthNoteIndex === 2) {
+      return;
+    }
+
+    if (p.patternIndex === 0) {
+      p.patternCircles = [];
+      
+      const availablePatterns = p.previousPattern 
+        ? p.patterns.filter(pattern => pattern !== p.previousPattern)
+        : p.patterns;
+      
+      p.currentPattern = p.random(availablePatterns);
+      p.generatePatternPositions(p.currentPattern);
+      p.previousPattern = p.currentPattern;
+    }
+    
+    if (p.patternPositions && p.patternPositions[p.patternIndex] && p.circleSet) {
+      const mainCircleRadius = p.circleSet.circles[0].r;
+      const centerX = p.width / 2;
+      const centerY = p.height / 2;
+      const furthestDepth = p.circleSet.depthOffset - 2400;
+      
+      const position = p.patternPositions[p.patternIndex];
+      const x = position[0];
+      const y = position[1];
+      const sizeType = position[2];
+      
+      const isCenter = Math.abs(x - centerX) < 1 && Math.abs(y - centerY) < 1;
+      const hasCenterCircle = p.patternCircles.some(circle => 
+        Math.abs(circle.x - centerX) < 1 && Math.abs(circle.y - centerY) < 1
+      );
+      const isLastCircle = p.patternIndex === (p.patternPositions.length - 1);
+      
+      let circleRadius;
+      if (p.currentPattern === 'vesica' && sizeType) {
+        if (sizeType === 'large') {
+          circleRadius = mainCircleRadius * 0.4;
+        } else if (sizeType === 'small') {
+          circleRadius = mainCircleRadius * 0.15;
+        } else {
+          circleRadius = mainCircleRadius * 0.25;
+        }
+      } else if (p.currentPattern === 'seed' && isLastCircle) {
+        circleRadius = mainCircleRadius * 0.5;
+      } else if (isCenter && hasCenterCircle) {
+        circleRadius = mainCircleRadius * 0.125;
+      } else {
+        circleRadius = mainCircleRadius * 0.25;
+      }
+      
+      const patternCircle = new Circle(
+        p,
+        x,
+        y,
+        circleRadius,
+        furthestDepth,
+        p.circleSet.complementaryColor, 
+        true
+      );
+      patternCircle.growing = false;
+      
+      p.patternCircles.push(patternCircle);
+    }
+    
+    const maxPatternIndex = p.patternPositions ? p.patternPositions.length - 1 : 7;
+    p.patternIndex = (p.patternIndex + 1) % (maxPatternIndex + 1);
+  };
+
+  p.generatePatternPositions = (patternType) => {
+    p.patternPositions = [];
+    const centerX = p.width / 2;
+    const centerY = p.height / 2;
+    const maxRadius = Math.min(p.width, p.height) * 0.25;
+    
+    switch (patternType) {
+      case 'spiral': {
+        const minCanvasSize = Math.min(p.width, p.height);
+        const baseRadius = minCanvasSize * 0.05;
+        const scaleFactor = minCanvasSize * 0.05;
+        
+        for (let i = 0; i < 8; i++) {
+          const spiralAngle = i * 0.6;
+          const spiralRadius = baseRadius + Math.pow(i, 1.3) * scaleFactor;
+          const x = centerX + p.cos(spiralAngle) * spiralRadius;
+          const y = centerY + p.sin(spiralAngle) * spiralRadius;
+          p.patternPositions.push([x, y]);
+        }
+        return;
+      }
+      case 'vesica': {
+        const minCanvasSize = Math.min(p.width, p.height);
+        const mainCircleRadius = minCanvasSize / 3;
+        const patternCircleRadius = mainCircleRadius * 0.35;
+        const vesicaSpacing = patternCircleRadius;
+        const vesicaPairSpacing = patternCircleRadius * 3;
+        
+        const leftVesicaX = centerX - vesicaPairSpacing / 2;
+        const rightVesicaX = centerX + vesicaPairSpacing / 2;
+        
+        p.patternPositions.push([leftVesicaX, centerY - vesicaSpacing / 2, 'medium']);
+        p.patternPositions.push([leftVesicaX, centerY + vesicaSpacing / 2, 'medium']);
+        p.patternPositions.push([leftVesicaX, centerY, 'small']);
+        p.patternPositions.push([leftVesicaX, centerY, 'large']);
+        
+        p.patternPositions.push([rightVesicaX, centerY - vesicaSpacing / 2, 'medium']);
+        p.patternPositions.push([rightVesicaX, centerY + vesicaSpacing / 2, 'medium']);
+        p.patternPositions.push([rightVesicaX, centerY, 'small']);
+        p.patternPositions.push([rightVesicaX, centerY, 'large']);
+        return;
+      }
+      case 'seed': {
+        const minCanvasSize = Math.min(p.width, p.height);
+        const mainCircleRadius = minCanvasSize / 3;
+        const patternCircleRadius = mainCircleRadius * 0.25;
+        const tubeRadius = Math.max(patternCircleRadius * 0.12, 1);
+        const spacing = patternCircleRadius + tubeRadius;
+        
+        p.patternPositions.push([centerX, centerY]);
+        for (let i = 0; i < 6; i++) {
+          const angle = p.TWO_PI * (i / 6) - p.HALF_PI;
+          const x = centerX + spacing * Math.cos(angle);
+          const y = centerY + spacing * Math.sin(angle);
+          p.patternPositions.push([x, y]);
+        }
+        p.patternPositions.push([centerX, centerY]);
+        return;
+      }
+      case 'circle':
+      default: {
+        const minCanvasSize = Math.min(p.width, p.height);
+        const mainCircleRadius = minCanvasSize / 3;
+        const patternCircleRadius = mainCircleRadius * 0.25;
+        const tubeRadius = Math.max(patternCircleRadius * 0.12, 1);
+        const spacing = (patternCircleRadius + tubeRadius) * 2;
+        
+        p.patternPositions.push([centerX, centerY]);
+        for (let i = 0; i < 6; i++) {
+          const angle = p.TWO_PI * (i / 6) - p.HALF_PI;
+          const x = centerX + spacing * Math.cos(angle);
+          const y = centerY + spacing * Math.sin(angle);
+          p.patternPositions.push([x, y]);
+        }
+        p.patternPositions.push([centerX, centerY]);
+        break;
+      }
+    }
+    
+    p.patternPositions = p.shuffle(p.patternPositions);
   };
 
   p.generatePalette = () => {

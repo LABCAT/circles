@@ -1,9 +1,14 @@
 import Circle from "./Circle.js";
+import ColorGenerator from "@/lib/p5.colorGenerator.js";
 
 class CircleSet {
   constructor(p, baseColor, depthRange = 800, depthOffset = 0) {
     this.p = p;
     this.baseColor = baseColor;
+    
+    const generator = new ColorGenerator(p, baseColor.toString());
+    this.complementaryColor = generator.getComplementary()[1];
+    
     this.depthRange = depthRange;
     this.depthOffset = depthOffset;
     this.circles = [];
@@ -18,7 +23,8 @@ class CircleSet {
         p.height / 2,
         initialRadius,
         depthOffset,
-        baseColor
+        baseColor,
+        true
       )
     );
   }

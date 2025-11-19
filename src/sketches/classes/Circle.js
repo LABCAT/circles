@@ -1,12 +1,29 @@
 class Circle {
-  constructor(p, x, y, r, z = 0, color = [255, 0, 175, 220]) {
+  constructor(p, x, y, r, z = 0, color = null, isMainCircle = false) {
     this.p = p;
     this.growing = true;
     this.x = x;
     this.y = y;
     this.r = r;
     this.z = z;
-    this.color = color;
+    this.color = color || p.color(255, 0, 175, 220);
+    this.isMainCircle = isMainCircle;
+    
+    if (!isMainCircle && p.random() < 0.3) {
+      const materials = ['ambient', 'specular', 'normal'];
+      this.materialType = p.random(materials);
+    } else {
+      this.materialType = 'emissive';
+    }
+  }
+
+  getMaterialColor() {
+    const p = this.p;
+    p.push();
+    p.colorMode(p.RGB, 255);
+    const colorArray = [p.red(this.color), p.green(this.color), p.blue(this.color), 220];
+    p.pop();
+    return colorArray;
   }
 
   edges() {
@@ -28,17 +45,21 @@ class Circle {
     p.push();
     p.translate(this.x, this.y, this.z);
 
-    // Material palette — comment/uncomment a single line below to test.
     p.noStroke();
     p.shininess(80);
-    p.emissiveMaterial(...this.color);
-    // p.ambientMaterial(...this.color);
-    // p.specularMaterial(...this.color);
-    // p.normalMaterial();
-    // p.noFill(); p.stroke(...this.color); p.strokeWeight(1);
+    
+    const materialFunction = `${this.materialType}Material`;
+    const colorArray = this.getMaterialColor();
+    
+    if (this.materialType === 'normal') {
+      p[materialFunction]();
+    } else {
+      p[materialFunction](...colorArray);
+    }
 
     const tubeRadius = Math.max(this.r * 0.12, 1);
     p.torus(this.r, tubeRadius);
+    p.fill(this.color);
     p.pop();
   }
 }
