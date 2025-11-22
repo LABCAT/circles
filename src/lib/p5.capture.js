@@ -4,17 +4,23 @@ export default function initCapture(p, options = {}) {
   const isOptionsObject = options && typeof options === 'object' && !Array.isArray(options);
   const prefix = isOptionsObject ? options.prefix ?? options.captureFilePrefix : options;
   const enabled = isOptionsObject ? !!options.enabled : options !== undefined ? true : p.captureEnabled ?? false;
+  const captureCSSBackground = isOptionsObject ? !!options.captureCSSBackground : false;
 
   p.captureFilePrefix = prefix || p.captureFilePrefix || 'capture';
   p.captureEnabled = enabled;
+  p.captureCSSBackground = captureCSSBackground;
 
   p.capturedFrames = [];
   p.frameNumber = 0;
   p.captureInProgress = false;
 
-  p.captureFrame = () => {
+  p.captureFrame = async () => {
     const canvasElt = p.canvas?.elt ?? p.canvas;
     const frameNum = p.frameNumber++;
+
+    if (p.captureCSSBackground) {
+      return p.captureFrameWithBackground(canvasElt, frameNum);
+    }
 
     return new Promise((resolve) => {
       canvasElt.toBlob((blob) => {
@@ -60,10 +66,7 @@ export default function initCapture(p, options = {}) {
 
       p.song._lastPos = Math.max(0, frameTime * p.audioSampleRate);
 
-      if (p.currentLandscapes) {
-        p.currentLandscapes.update();
-        p.currentLandscapes.draw();
-      }
+      p.draw();
 
       await p.captureFrame();
     }
@@ -124,6 +127,64 @@ export default function initCapture(p, options = {}) {
     
     p.capturedFrames = [];
     p.frameNumber = 0;
+  };
+
+  p.gradientToPng = (cssValue, width, height, blendMode = '') => {
+    return new Promise((resolve) => {
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+          <foreignObject width="100%" height="100%">
+            <div xmlns="http://www.w3.org/1999/xhtml"
+                 style="width:${width}px;height:${height}px;background: ${cssValue}; ${blendMode ? `background-blend-mode: ${blendMode};` : ''}">
+            </div>
+          </foreignObject>
+        </svg>
+      `;
+      const blob = new Blob([svg], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        resolve(canvas);
+      };
+      img.src = url;
+    });
+  };
+
+  p.captureFrameWithBackground = async (canvasElt, frameNum) => {
+    const gradientBg = document.documentElement.style.getPropertyValue('--gradient-bg');
+    const blendMode = document.documentElement.style.getPropertyValue('--gradient-blend-mode');
+    
+    const width = canvasElt.width;
+    const height = canvasElt.height;
+
+    const gradientCanvas = await p.gradientToPng(gradientBg, width, height, blendMode);
+    
+    const compositeCanvas = document.createElement('canvas');
+    compositeCanvas.width = width;
+    compositeCanvas.height = height;
+    const ctx = compositeCanvas.getContext('2d');
+    
+    ctx.drawImage(gradientCanvas, 0, 0);
+    ctx.drawImage(canvasElt, 0, 0);
+
+    return new Promise((resolve) => {
+      compositeCanvas.toBlob((blob) => {
+        if (blob) {
+          p.capturedFrames.push({
+            blob,
+            frameNumber: frameNum,
+            filename: `${p.captureFilePrefix}_${p.nf(frameNum, 5)}.png`
+          });
+        }
+        resolve();
+      }, 'image/png');
+    });
   };
 
   if (p.captureEnabled) {
