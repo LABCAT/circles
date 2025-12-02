@@ -48,6 +48,8 @@ export default function initCapture(p, options = {}) {
     p.captureInProgress = true;
     p.capturedFrames = [];
     p.frameNumber = 0;
+    p.zipPartNumber = 1;
+    p.captureTimestamp = Date.now();
 
     const cues = p.song._cues.slice().sort((a, b) => a.time - b.time);
     let cueIndex = 0;
@@ -69,21 +71,27 @@ export default function initCapture(p, options = {}) {
       p.draw();
 
       await p.captureFrame();
+
+      if (p.capturedFrames.length >= 1500) {
+        await p.downloadFramesPart();
+      }
+    }
+
+    if (p.capturedFrames.length > 0) {
+      await p.downloadFramesPart();
     }
 
     p.captureInProgress = false;
 
-    console.log(`Capture complete. Captured ${p.capturedFrames.length} frames.`);
-    await p.downloadFrames();
+    console.log(`Capture complete. Downloaded ${p.frameNumber} frames.`);
   };
 
-  p.downloadFrames = async () => {
+  p.downloadFramesPart = async () => {
     if (p.capturedFrames.length === 0) {
-      console.log('No frames to download');
       return;
     }
 
-    console.log(`Creating ZIP with ${p.capturedFrames.length} frames...`);
+    console.log(`Creating ZIP part ${p.zipPartNumber} with ${p.capturedFrames.length} frames...`);
     
     p.capturedFrames.sort((a, b) => a.frameNumber - b.frameNumber);
     
@@ -94,21 +102,23 @@ export default function initCapture(p, options = {}) {
       zip.file(frame.filename, frame.blob, { binary: true });
       
       if ((i + 1) % 100 === 0) {
-        console.log(`Added ${i + 1} / ${p.capturedFrames.length} frames...`);
+        console.log(`Added ${i + 1} / ${p.capturedFrames.length} frames to part ${p.zipPartNumber}...`);
       }
       frame.blob = null;
     }
 
-    console.log('Generating ZIP file...');
+    if (p.zipPartNumber === 1) {
+      const ffmpegCommandLines = [
+        `# ProRes 422 HQ (10-bit, Resolve-friendly)`,
+        `ffmpeg -framerate 60 -i ${p.captureFilePrefix}_%05d.png -c:v prores_ks -profile:v 3 -pix_fmt yuv422p10le ${p.captureFilePrefix}_prores422hq.mov`,
+        ``,
+        `# ProRes 4444 (10-bit + alpha, very large)`,
+        `ffmpeg -framerate 60 -i ${p.captureFilePrefix}_%05d.png -c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le ${p.captureFilePrefix}_prores4444.mov`
+      ].join('\n');
+      zip.file('ffmpeg_command.txt', ffmpegCommandLines);
+    }
 
-    const ffmpegCommandLines = [
-      `# ProRes 422 HQ (10-bit, Resolve-friendly)`,
-      `ffmpeg -framerate 60 -i ${p.captureFilePrefix}_%05d.png -c:v prores_ks -profile:v 3 -pix_fmt yuv422p10le ${p.captureFilePrefix}_prores422hq.mov`,
-      ``,
-      `# ProRes 4444 (10-bit + alpha, very large)`,
-      `ffmpeg -framerate 60 -i ${p.captureFilePrefix}_%05d.png -c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le ${p.captureFilePrefix}_prores4444.mov`
-    ].join('\n');
-    zip.file('ffmpeg_command.txt', ffmpegCommandLines);
+    console.log(`Generating ZIP part ${p.zipPartNumber}...`);
 
     const zipBlob = await zip.generateAsync({ 
       type: 'blob'
@@ -117,16 +127,16 @@ export default function initCapture(p, options = {}) {
     const url = URL.createObjectURL(zipBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${p.captureFilePrefix}_frames_${Date.now()}.zip`;
+    link.download = `${p.captureFilePrefix}_frames_part${p.zipPartNumber}_${p.captureTimestamp}.zip`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 100);
 
-    console.log(`Downloaded ZIP with ${p.capturedFrames.length} frames`);
+    console.log(`Downloaded ZIP part ${p.zipPartNumber}`);
     
     p.capturedFrames = [];
-    p.frameNumber = 0;
+    p.zipPartNumber++;
   };
 
   p.gradientToPng = (cssValue, width, height, blendMode = '') => {

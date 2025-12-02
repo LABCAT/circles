@@ -79,7 +79,6 @@ const sketch = (p) => {
       p.song = p.loadSound(audio, (sound) => {
           p.audioSampleRate = sound.sampleRate();
           p.totalAnimationFrames = Math.floor(sound.duration() * 60);
-          p.totalAnimationFrames = 10;
           p.loadMidi();
       });
       p.song.onended(() => {
@@ -96,6 +95,7 @@ const sketch = (p) => {
   };
 
   p.setup = () => {
+    p.pixelDensity(1);
     p.createCanvas(window.innerWidth, window.innerHeight, p.WEBGL);
     p.canvas.style.position = 'relative';
     p.canvas.style.zIndex = '1';
