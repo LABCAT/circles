@@ -112,7 +112,7 @@ const sketch = (p) => {
     }
     
     p.circleSet = p.circleSets[0];
-    // initCapture(p, { prefix: 'CirclesNo8', enabled: true, captureCSSBackground: true });
+    initCapture(p, { prefix: 'CirclesNo8', enabled: false, captureCSSBackground: true });
   };
 
   p.draw = () => {

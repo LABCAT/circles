@@ -4,6 +4,11 @@ export const sketchMetadata = {
     description: 'An exploration into generative circles.',
     sketch: 'CirclesNo8.js',
   },
+  'number-9': {
+    title: '#CirclesNo9',
+    description: 'An exploration into generative circles.',
+    sketch: 'CirclesNo9.js',
+  },
 };
 
 export function getAllSketches() {
