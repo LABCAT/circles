@@ -58,10 +58,6 @@ export class Group extends Map {
     for (let i = 0; i < 6; i++) {
       addhex(new Hexagon(p, points[i].kx, points[i].ky, radiush, radius));
     }
-    for (let i = 0; i < 6; i++) {
-      const n = symm(points[i]);
-      addhex(new Hexagon(p, n.kx, n.ky, radiush, radius));
-    }
     this.key = key;
   }
 }
