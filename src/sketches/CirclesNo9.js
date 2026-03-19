@@ -57,11 +57,11 @@ const sketch = (p) => {
         p.PPQ = result.header.ppq;
         p.bpm = result.header.tempos[0]?.bpm ?? p.bpm;
         console.log("CirclesNo9 MIDI loaded:", result);
-        p.scheduleCueSet(result.tracks[11]?.notes ?? [], "executeTrack11");   // Mimic - Single Sample Roads
+        p.scheduleCueSet(result.tracks[11]?.notes ?? [], "executeTrack13");   // Mimic - Single Sample Roads
         p.scheduleCueSet(result.tracks[8]?.notes ?? [], "executeTrack8");     // Mimic - Vintage Multi Voice (top-half gradient)
         // p.scheduleCueSet(result.tracks[12]?.notes ?? [], "executeTrack12");   // Kong - Kong Kit
         const track13Notes = result.tracks[13]?.notes ?? [];
-        p.scheduleCueSet(track13Notes, "executeTrack13");   // Monotone Bass - Classic Saw
+        p.scheduleCueSet(track13Notes, "executeTrack11");   // Monotone Bass - Classic Saw
         document.getElementById("loader")?.classList.add("loading--complete");
       })
       .catch((err) => console.error("Failed to load CirclesNo9 MIDI:", err));
@@ -273,7 +273,13 @@ const sketch = (p) => {
       y = p.random(-halfH + margin, halfH - margin);
     }
     p.evolHue = (p.evolHue + p.dHue + 360) % 360;
-    p.drawnGroups.push({ type: "drum", x, y, hue: p.evolHue, zOffset: DRUM_Z_OFFSET, materialType: p.random() < MATERIAL_OTHER_CHANCE ? p.random(MATERIAL_OTHER_TYPES) : "emissive" });
+    const willSpin = p.random() < 0.8;
+    const spinSpeedZ = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00025, 0.0012) : 0;
+    const spinSpeedX = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.0002, 0.0009) : 0;
+    const spinSpeedY = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.0002, 0.0009) : 0;
+    const tiltX = willSpin ? p.random(-0.18, 0.18) : 0;
+    const tiltY = willSpin ? p.random(-0.18, 0.18) : 0;
+    p.drawnGroups.push({ type: "drum", x, y, hue: p.evolHue, zOffset: DRUM_Z_OFFSET, materialType: p.random() < MATERIAL_OTHER_CHANCE ? p.random(MATERIAL_OTHER_TYPES) : "emissive", spinSpeedZ, spinSpeedX, spinSpeedY, tiltX, tiltY });
   };
 
   p.drawNextGroup = (zOffset = 0) => {
@@ -285,7 +291,13 @@ const sketch = (p) => {
     if (!currGroup) return;
     p.visitedGroups.add(currGroup.key);
     p.evolHue = (p.evolHue + p.dHue + 360) % 360;
-    p.drawnGroups.push({ group: currGroup, hue: p.evolHue, zOffset, materialType: p.random() < MATERIAL_OTHER_CHANCE ? p.random(MATERIAL_OTHER_TYPES) : "emissive" });
+    const willSpin = p.random() < 0.8;
+    const spinSpeedZ = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00018, 0.0009) : 0;
+    const spinSpeedX = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00015, 0.0007) : 0;
+    const spinSpeedY = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00015, 0.0007) : 0;
+    const tiltX = willSpin ? p.random(-0.14, 0.14) : 0;
+    const tiltY = willSpin ? p.random(-0.14, 0.14) : 0;
+    p.drawnGroups.push({ group: currGroup, hue: p.evolHue, zOffset, materialType: p.random() < MATERIAL_OTHER_CHANCE ? p.random(MATERIAL_OTHER_TYPES) : "emissive", spinSpeedZ, spinSpeedX, spinSpeedY, tiltX, tiltY });
     const repr = currGroup.values().next().value;
     const neighGroups = [];
     dneighbors.forEach((dk) => {
@@ -308,11 +320,16 @@ const sketch = (p) => {
     }
   };
 
-  p.drawHex = (hex, hue, materialType = null) => {
+  p.drawHex = (hex, hue, materialType = null, rotX = 0, rotY = 0, rotZ = 0, tiltX = 0, tiltY = 0) => {
     const x = hex.c.x - p.width / 2;
     const y = hex.c.y - p.height / 2;
     p.push();
     p.translate(x, y, 0);
+    if (tiltX) p.rotateX(tiltX);
+    if (tiltY) p.rotateY(tiltY);
+    if (rotX) p.rotateX(rotX);
+    if (rotY) p.rotateY(rotY);
+    if (rotZ) p.rotateZ(rotZ);
     p.noStroke();
     const c = p.color(`hsl(${hue}, 100%, 50%)`);
     if (materialType) p.applyTorusMaterial(materialType, c);
@@ -425,6 +442,43 @@ const sketch = (p) => {
       const fovy = p.PI / 3.5;
       const visibleH = 2 * dist * Math.tan(fovy / 2) * 2;
       const visibleW = visibleH * (p.width / p.height);
+
+      const drawFadeArcStack = ({ yOffset, startAngle, stopAngle, opacity, count = 24 }) => {
+        const maxR = Math.max(visibleW, visibleH) * 0.78;
+        const minR = maxR * 0.04;
+        const band = (maxR - minR) / count;
+        const overlap = band * 0.03;
+        const steps = 42;
+
+        p.push();
+        p.translate(0, yOffset, 0);
+        p.noStroke();
+        for (let i = 0; i < count; i++) {
+          const r0 = minR + i * band;
+          const r1 = minR + (i + 1) * band + overlap;
+          const layerT = i / Math.max(1, count - 1);
+          const a = opacity * (0.12 + 0.55 * (1 - layerT));
+          p.noStroke();
+          p.fill(0, 0, 0, a * 255);
+          p.push();
+          p.translate(0, 0, i * 0.6);
+          p.beginShape();
+          for (let s = 0; s <= steps; s++) {
+            const t = s / steps;
+            const ang = p.lerp(startAngle, stopAngle, t);
+            p.vertex(p.cos(ang) * r1, p.sin(ang) * r1);
+          }
+          for (let s = steps; s >= 0; s--) {
+            const t = s / steps;
+            const ang = p.lerp(startAngle, stopAngle, t);
+            p.vertex(p.cos(ang) * r0, p.sin(ang) * r0);
+          }
+          p.endShape(p.CLOSE);
+          p.pop();
+        }
+        p.pop();
+      };
+
       p.push();
       p.translate(0, 0, TRACK11_Z_START);
       p.noStroke();
@@ -432,18 +486,23 @@ const sketch = (p) => {
         const elapsed = p.song.currentTime() * 1000 - p.blackFadeTop.startTime;
         const progress = p.constrain(elapsed / p.blackFadeTop.duration, 0, 1);
         const opacity = Math.pow(progress, 0.75);
-        p.fill(0, 0, 0, opacity * 255);
-        p.translate(0, -visibleH / 4, 0);
-        p.plane(visibleW, visibleH / 2);
-        p.translate(0, visibleH / 4, 0);
+        drawFadeArcStack({
+          yOffset: 0,
+          startAngle: p.PI,
+          stopAngle: p.TWO_PI,
+          opacity,
+        });
       }
       if (p.blackFadeBottom.active) {
         const elapsed = p.song.currentTime() * 1000 - p.blackFadeBottom.startTime;
         const progress = p.constrain(elapsed / p.blackFadeBottom.duration, 0, 1);
         const opacity = Math.pow(progress, 0.5);
-        p.fill(0, 0, 0, opacity * 255);
-        p.translate(0, visibleH / 4, 0);
-        p.plane(visibleW, visibleH / 2);
+        drawFadeArcStack({
+          yOffset: 0,
+          startAngle: 0,
+          stopAngle: p.PI,
+          opacity,
+        });
       }
       p.pop();
     }
@@ -454,6 +513,15 @@ const sketch = (p) => {
         p.push();
         p.translate(item.x, item.y, item.zOffset);
         p.noStroke();
+        const t = p.song ? p.song.currentTime() * 1000 : p.millis();
+        const rotX = item.spinSpeedX ? t * item.spinSpeedX : 0;
+        const rotY = item.spinSpeedY ? t * item.spinSpeedY : 0;
+        const rotZ = item.spinSpeedZ ? t * item.spinSpeedZ : 0;
+        if (item.tiltX) p.rotateX(item.tiltX);
+        if (item.tiltY) p.rotateY(item.tiltY);
+        if (rotX) p.rotateX(rotX);
+        if (rotY) p.rotateY(rotY);
+        if (rotZ) p.rotateZ(rotZ);
         const c = p.color(`hsl(${item.hue}, 100%, 50%)`);
         if (item.materialType) p.applyTorusMaterial(item.materialType, c);
         else p.fill(c);
@@ -461,10 +529,14 @@ const sketch = (p) => {
         p.torus(r, r * 0.35);
         p.pop();
       } else {
-        const { group, hue, zOffset = 0, materialType = null } = item;
+        const { group, hue, zOffset = 0, materialType = null, spinSpeedZ = 0, spinSpeedX = 0, spinSpeedY = 0, tiltX = 0, tiltY = 0 } = item;
         p.push();
         p.translate(0, 0, zOffset);
-        group.forEach((hex) => p.drawHex(hex, hue, materialType));
+        const t = p.song ? p.song.currentTime() * 1000 : p.millis();
+        const rotX = spinSpeedX ? t * spinSpeedX : 0;
+        const rotY = spinSpeedY ? t * spinSpeedY : 0;
+        const rotZ = spinSpeedZ ? t * spinSpeedZ : 0;
+        group.forEach((hex) => p.drawHex(hex, hue, materialType, rotX, rotY, rotZ, tiltX, tiltY));
         p.pop();
       }
     });
