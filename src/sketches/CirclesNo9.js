@@ -37,6 +37,7 @@ const MATERIAL_OTHER_TYPES = ["ambient", "specular", "normal"];
 
 const sketch = (p) => {
   p.song = null;
+  p.audioLoaded = false;
   p.PPQ = 960;
   p.bpm = 102;
   p.blackFadeTop = { active: false, startTime: 0, duration: 0 };
@@ -96,12 +97,20 @@ const sketch = (p) => {
         p.scheduleCueSet(result.tracks[8]?.notes ?? [], "executeTrack8");
         p.scheduleCueSet(result.tracks[13]?.notes ?? [], "executeTrack11");
         document.getElementById("loader")?.classList.add("loading--complete");
+        document.getElementById("play-icon")?.classList.add("fade-in");
+        p.audioLoaded = true;
       })
       .catch((err) => console.error("Failed to load CirclesNo9 MIDI:", err));
   };
 
   p.preload = () => {
     p.song = p.loadSound(audio, () => p.loadMidi());
+    p.song.onended(() => {
+      if (p.canvas) {
+        p.canvas.classList.add("p5Canvas--cursor-play");
+        p.canvas.classList.remove("p5Canvas--cursor-pause");
+      }
+    });
   };
 
   p.resetPattern = () => {
@@ -576,8 +585,17 @@ const sketch = (p) => {
   };
 
   p.mousePressed = () => {
-    if (p.song && !p.song.isPlaying()) p.song.play();
-    else if (p.song && p.song.isPlaying()) p.song.pause();
+    if (!p.audioLoaded || !p.song) return;
+    if (p.song.isPlaying()) {
+      p.song.pause();
+      p.canvas.classList.add("p5Canvas--cursor-play");
+      p.canvas.classList.remove("p5Canvas--cursor-pause");
+    } else {
+      document.getElementById("play-icon")?.classList.remove("fade-in");
+      p.song.play();
+      p.canvas.classList.add("p5Canvas--cursor-pause");
+      p.canvas.classList.remove("p5Canvas--cursor-play");
+    }
   };
 
   p.windowResized = () => {
