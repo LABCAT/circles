@@ -22,14 +22,16 @@ const SCENE_Z = 400;
 /** Track 11 layers: start Z (more negative = further away). Tune for “from the distance” (e.g. -5000 to -8000). */
 const TRACK11_Z_START = -3500;
 const TRACK11_Z_STEP = 380;
-/** Fade arc time curve: higher = slower to darken at first (smaller = reaches black sooner). */
-const FADE_TOP_EASE_POW = 1.5;
-const FADE_BOTTOM_EASE_POW = 0.38;
 /** Peak strength into the arc stack (0–1). Bottom can go full black; top stays softer. */
-const FADE_TOP_MAX_OPACITY = 0.82;
+const FADE_TOP_MAX_OPACITY = 2;
+/** Tones down top arc when inner leads (reversal moved peak weight from outer to inner annuli). */
+const FADE_TOP_INNER_FIRST_ALPHA_SCALE = 0.38;
 const FADE_BOTTOM_MAX_OPACITY = 1;
 /** Extra multiplier on each ring’s alpha (bottom only) so it stacks to true black. */
-const FADE_BOTTOM_RING_ALPHA_BOOST = 1.28;
+const FADE_BOTTOM_RING_ALPHA_BOOST = 3.48;
+/** Bottom arc layer weights (higher floor/range = darker, especially toward center). */
+const FADE_BOTTOM_LAYER_FLOOR = 0.24;
+const FADE_BOTTOM_LAYER_RANGE = 0.68;
 const MATERIAL_OTHER_CHANCE = 0.3;
 const MATERIAL_OTHER_TYPES = ["ambient", "specular", "normal"];
 
@@ -37,8 +39,9 @@ const sketch = (p) => {
   p.song = null;
   p.PPQ = 960;
   p.bpm = 102;
-  p.blackFadeTop = { active: true, startTime: 0, duration: 0 };
-  p.blackFadeBottom = { active: true, startTime: 0, duration: 0 };
+  p.blackFadeTop = { active: false, startTime: 0, duration: 0 };
+  p.blackFadeBottom = { active: false, startTime: 0, duration: 0 };
+  p.finalCue = false;
 
   const chromaRgb = (h, sat, bri) => {
     p.push();
@@ -89,10 +92,9 @@ const sketch = (p) => {
         p.PPQ = result.header.ppq;
         p.bpm = result.header.tempos[0]?.bpm ?? p.bpm;
         console.log("CirclesNo9 MIDI loaded:", result);
-        p.scheduleCueSet(result.tracks[11]?.notes ?? [], "executeTrack13");   // Mimic - Single Sample Roads
-        p.scheduleCueSet(result.tracks[8]?.notes ?? [], "executeTrack8");     // Mimic - Vintage Multi Voice (top-half gradient)
-        const track13Notes = result.tracks[13]?.notes ?? [];
-        p.scheduleCueSet(track13Notes, "executeTrack11");   // Monotone Bass - Classic Saw
+        p.scheduleCueSet(result.tracks[11]?.notes ?? [], "executeTrack13");
+        p.scheduleCueSet(result.tracks[8]?.notes ?? [], "executeTrack8");
+        p.scheduleCueSet(result.tracks[13]?.notes ?? [], "executeTrack11");
         document.getElementById("loader")?.classList.add("loading--complete");
       })
       .catch((err) => console.error("Failed to load CirclesNo9 MIDI:", err));
@@ -284,7 +286,7 @@ const sketch = (p) => {
     if (!currGroup) return;
     p.visitedGroups.add(currGroup.key);
     p.evolHue = (p.evolHue + p.dHue + 360) % 360;
-    const willSpin = p.random() < 0.1;
+    const willSpin = p.random() < 0.8;
     const spinSpeedZ = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00018, 0.0009) : 0;
     const spinSpeedX = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00015, 0.0007) : 0;
     const spinSpeedY = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00015, 0.0007) : 0;
@@ -384,6 +386,7 @@ const sketch = (p) => {
     for (let i = 0; i < 12; i++) p.drawNextGroup(p.track11Z);
     p.track11Z += TRACK11_Z_STEP;
   };
+
   p.executeTrack13 = (note) => {
     p.gradientBottomLeft = p.generateBottomGradient(0);
     p.gradientBottomRight = p.generateBottomGradient(1);
@@ -392,6 +395,7 @@ const sketch = (p) => {
     p.blackFadeBottom.active = true;
     p.blackFadeBottom.startTime = p.song.currentTime() * 1000;
     p.blackFadeBottom.duration = duration * 1000;
+    p.finalCue = note.currentCue === 76;
   };
 
   p.setup = () => {
@@ -445,13 +449,13 @@ const sketch = (p) => {
     p.clear();
 
     if (p.song) {
-      if (p.blackFadeTop.active) {
+      if (p.blackFadeTop.active && p.blackFadeTop.duration > 0) {
         const elapsed = p.song.currentTime() * 1000 - p.blackFadeTop.startTime;
-        if (elapsed >= p.blackFadeTop.duration) p.blackFadeTop.active = false;
+        if (elapsed >= p.blackFadeTop.duration && !p.finalCue) p.blackFadeTop.active = false;
       }
-      if (p.blackFadeBottom.active) {
+      if (p.blackFadeBottom.active && p.blackFadeBottom.duration > 0) {
         const elapsed = p.song.currentTime() * 1000 - p.blackFadeBottom.startTime;
-        if (elapsed >= p.blackFadeBottom.duration) p.blackFadeBottom.active = false;
+        if (elapsed >= p.blackFadeBottom.duration && !p.finalCue) p.blackFadeBottom.active = false;
       }
     }
 
@@ -466,11 +470,24 @@ const sketch = (p) => {
       const visibleH = 2 * dist * Math.tan(fovy / 2) * 2;
       const visibleW = visibleH * (p.width / p.height);
 
-      const drawFadeArcStack = ({ yOffset, startAngle, stopAngle, opacity, count = 48, minRFactor = 0.04, opacityMul = 1, angleOffset = 0, ringAlphaBoost = 1 }) => {
+      const drawFadeArcStack = ({
+        yOffset,
+        startAngle,
+        stopAngle,
+        opacity,
+        count = 24,
+        alphaMax = 1,
+        layerFloor = 0.12,
+        layerRange = 0.55,
+        ringAlphaBoost = 1,
+        /** false: outer rings darken first (bottom). true: inner rings darken first (top). */
+        innerFirst = false,
+        innerFirstAlphaScale = 1,
+      }) => {
         const maxR = Math.max(visibleW, visibleH) * 0.78;
-        const minR = maxR * minRFactor;
+        const minR = maxR * 0.04;
         const band = (maxR - minR) / count;
-        const overlap = band * 0.02;
+        const overlap = band * 0.03;
         const steps = 42;
 
         p.push();
@@ -479,21 +496,26 @@ const sketch = (p) => {
         for (let i = 0; i < count; i++) {
           const r0 = minR + i * band;
           const r1 = minR + (i + 1) * band + overlap;
-          const layerT = i / Math.max(1, count - 1);
-          const a = p.constrain(opacity * opacityMul * ringAlphaBoost * (0.12 + 0.55 * (1 - layerT)), 0, 1);
+          const radialT = i / Math.max(1, count - 1);
+          const layerT = innerFirst ? 1 - radialT : radialT;
+          const a = p.constrain(
+            opacity * alphaMax * ringAlphaBoost * (layerFloor + layerRange * layerT) * (innerFirst ? innerFirstAlphaScale : 1),
+            0,
+            1,
+          );
           p.noStroke();
-          p.fill(0, 0, 0, a * 255);
           p.push();
           p.translate(0, 0, i * 0.6);
+          p.fill(0, 0, 0, a * 255);
           p.beginShape();
           for (let s = 0; s <= steps; s++) {
             const t = s / steps;
-            const ang = p.lerp(startAngle, stopAngle, t) + angleOffset;
+            const ang = p.lerp(startAngle, stopAngle, t);
             p.vertex(p.cos(ang) * r1, p.sin(ang) * r1);
           }
           for (let s = steps; s >= 0; s--) {
             const t = s / steps;
-            const ang = p.lerp(startAngle, stopAngle, t) + angleOffset;
+            const ang = p.lerp(startAngle, stopAngle, t);
             p.vertex(p.cos(ang) * r0, p.sin(ang) * r0);
           }
           p.endShape(p.CLOSE);
@@ -505,26 +527,34 @@ const sketch = (p) => {
       p.push();
       p.translate(0, 0, TRACK11_Z_START);
       p.noStroke();
-      if (p.blackFadeTop.active) {
+      if (p.blackFadeTop.active && p.blackFadeTop.duration > 0) {
         const elapsed = p.song.currentTime() * 1000 - p.blackFadeTop.startTime;
         const progress = p.constrain(elapsed / p.blackFadeTop.duration, 0, 1);
-        const opacity = p.constrain(Math.pow(progress, FADE_TOP_EASE_POW) * FADE_TOP_MAX_OPACITY, 0, 1);
+        const opacity = Math.pow(progress, 0.75);
         drawFadeArcStack({
           yOffset: 0,
           startAngle: p.PI,
           stopAngle: p.TWO_PI,
           opacity,
+          alphaMax: FADE_TOP_MAX_OPACITY,
+          layerFloor: 0.12,
+          layerRange: 0.88,
+          innerFirst: true,
+          innerFirstAlphaScale: FADE_TOP_INNER_FIRST_ALPHA_SCALE,
         });
       }
-      if (p.blackFadeBottom.active) {
+      if (p.blackFadeBottom.active && p.blackFadeBottom.duration > 0) {
         const elapsed = p.song.currentTime() * 1000 - p.blackFadeBottom.startTime;
         const progress = p.constrain(elapsed / p.blackFadeBottom.duration, 0, 1);
-        const opacity = p.constrain(Math.pow(progress, FADE_BOTTOM_EASE_POW) * FADE_BOTTOM_MAX_OPACITY, 0, 1);
+        const opacity = Math.pow(progress, 0.5);
         drawFadeArcStack({
           yOffset: 0,
           startAngle: 0,
           stopAngle: p.PI,
           opacity,
+          alphaMax: FADE_BOTTOM_MAX_OPACITY,
+          layerFloor: FADE_BOTTOM_LAYER_FLOOR,
+          layerRange: FADE_BOTTOM_LAYER_RANGE,
           ringAlphaBoost: FADE_BOTTOM_RING_ALPHA_BOOST,
         });
       }
@@ -542,7 +572,7 @@ const sketch = (p) => {
       const rotZ = spinSpeedZ ? t * spinSpeedZ : 0;
       group.forEach((hex) => p.drawHex(hex, hue, materialType, rotX, rotY, rotZ, tiltX, tiltY));
       p.pop();
-    });
+     });
   };
 
   p.mousePressed = () => {
