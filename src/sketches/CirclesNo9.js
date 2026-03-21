@@ -12,19 +12,24 @@ import {
 } from "./classes/HexagonPattern.js";
 
 const base = import.meta.env.BASE_URL || "./";
-const audio = base + "audio/CirclesNo9.wav";
+const audio = base + "audio/CirclesNo9.mp3";
 const midi = base + "audio/CirclesNo9.mid";
 
 const GROUPS_PER_CUE = 4;
-const TORUS_SCALE = 0.52;
+const TORUS_SCALE = 0.68;
 const RADIUS_SCALE = 2;
 const SCENE_Z = 400;
 /** Track 11 layers: start Z (more negative = further away). Tune for “from the distance” (e.g. -5000 to -8000). */
 const TRACK11_Z_START = -3500;
 const TRACK11_Z_STEP = 380;
-const DRUM_Z_OFFSET = -600;
-const DRUM_EDGE_MARGIN = 0.02;
-const DRUM_EDGE_BAND = 0.12;
+/** Fade arc time curve: higher = slower to darken at first (smaller = reaches black sooner). */
+const FADE_TOP_EASE_POW = 1.5;
+const FADE_BOTTOM_EASE_POW = 0.38;
+/** Peak strength into the arc stack (0–1). Bottom can go full black; top stays softer. */
+const FADE_TOP_MAX_OPACITY = 0.82;
+const FADE_BOTTOM_MAX_OPACITY = 1;
+/** Extra multiplier on each ring’s alpha (bottom only) so it stacks to true black. */
+const FADE_BOTTOM_RING_ALPHA_BOOST = 1.28;
 const MATERIAL_OTHER_CHANCE = 0.3;
 const MATERIAL_OTHER_TYPES = ["ambient", "specular", "normal"];
 
@@ -34,6 +39,33 @@ const sketch = (p) => {
   p.bpm = 102;
   p.blackFadeTop = { active: true, startTime: 0, duration: 0 };
   p.blackFadeBottom = { active: true, startTime: 0, duration: 0 };
+
+  const chromaRgb = (h, sat, bri) => {
+    p.push();
+    p.colorMode(p.HSB, 360, 100, 100);
+    const hh = ((h % 360) + 360) % 360;
+    const c = p.color(hh, p.constrain(sat, 0, 100), p.constrain(bri, 0, 100));
+    const out = { r: Math.round(p.red(c)), g: Math.round(p.green(c)), b: Math.round(p.blue(c)) };
+    p.pop();
+    return out;
+  };
+
+  /** Skews away from “all blue”: warms, magenta, violet, green; blue only ~8%. */
+  const biasedHue = (variant, salt, driftDeg, hueSkew) => {
+    const roll = p.random();
+    let h;
+    if (roll < 0.2) h = p.random(4, 46);
+    else if (roll < 0.36) h = p.random(46, 88);
+    else if (roll < 0.52) h = p.random(275, 348);
+    else if (roll < 0.66) h = p.random(248, 275);
+    else if (roll < 0.78) h = p.random(88, 148);
+    else if (roll < 0.88) h = p.random(0, 18);
+    else if (roll < 0.94) h = p.random(148, 172);
+    else h = p.random(188, 218);
+    h = (h + hueSkew + variant * driftDeg + salt * 17 + p.random(-22, 22) + 360) % 360;
+    if (p.random() < 0.24) h = (h + 180) % 360;
+    return h;
+  };
 
   p.scheduleCueSet = (noteSet, callbackName, polyMode = false) => {
     let lastTicks = -1,
@@ -59,7 +91,6 @@ const sketch = (p) => {
         console.log("CirclesNo9 MIDI loaded:", result);
         p.scheduleCueSet(result.tracks[11]?.notes ?? [], "executeTrack13");   // Mimic - Single Sample Roads
         p.scheduleCueSet(result.tracks[8]?.notes ?? [], "executeTrack8");     // Mimic - Vintage Multi Voice (top-half gradient)
-        // p.scheduleCueSet(result.tracks[12]?.notes ?? [], "executeTrack12");   // Kong - Kong Kit
         const track13Notes = result.tracks[13]?.notes ?? [];
         p.scheduleCueSet(track13Notes, "executeTrack11");   // Monotone Bass - Classic Saw
         document.getElementById("loader")?.classList.add("loading--complete");
@@ -72,82 +103,74 @@ const sketch = (p) => {
   };
 
   p.resetPattern = () => {
-    p.drawnGroups = p.drawnGroups.filter((d) => d.type === "drum");
+    p.drawnGroups = [];
     p.visitedGroups = new Set();
     p.reachable = [new Group(p, 15, 0, p.radiush, p.radius)];
     p.track11Z = TRACK11_Z_START;
   };
 
-  p.generateBottomGradient = () => {
+  p.generateBottomGradient = (variant = 0) => {
+    const angleShift = variant * 107 + p.random(-22, 22);
+    const radialX = variant === 0 ? p.random(6, 38) : p.random(62, 94);
+    const radialY = variant === 0 ? p.random(18, 52) : p.random(48, 88);
+    const radialX2 = variant === 0 ? p.random(10, 42) : p.random(58, 90);
+    const radialY2 = variant === 0 ? p.random(22, 58) : p.random(42, 78);
+    const spineDeg = 165 + variant * 50 + p.random(-14, 14);
+    const hueSkew = variant === 0 ? 0 : 58;
+    const drift = 47;
     const generateDarkColor = () => {
-      const darkTypes = [
-        () => ({ r: 0, g: p.floor(20 + p.random(50)), b: p.floor(60 + p.random(90)) }),
-        () => ({ r: 0, g: p.floor(40 + p.random(60)), b: p.floor(100 + p.random(80)) }),
-        () => ({ r: p.floor(15 + p.random(35)), g: p.floor(50 + p.random(60)), b: p.floor(100 + p.random(80)) }),
-        () => ({ r: p.floor(30 + p.random(40)), g: 0, b: p.floor(100 + p.random(100)) }),
-        () => ({ r: 0, g: p.floor(60 + p.random(50)), b: p.floor(120 + p.random(60)) }),
-      ];
-      return darkTypes[p.floor(p.random(darkTypes.length))]();
+      if (p.random() < 0.08) return chromaRgb(biasedHue(variant, 9, drift, hueSkew), p.random(10, 32), p.random(38, 62));
+      return chromaRgb(biasedHue(variant, 1, drift, hueSkew), p.random(48, 92), p.random(32, 58));
     };
-    const generateMediumColor = () => {
-      const mediumTypes = [
-        () => ({ r: 0, g: p.floor(100 + p.random(80)), b: p.floor(140 + p.random(80)) }),
-        () => ({ r: 0, g: p.floor(120 + p.random(80)), b: p.floor(160 + p.random(60)) }),
-        () => ({ r: p.floor(40 + p.random(60)), g: p.floor(100 + p.random(100)), b: p.floor(150 + p.random(70)) }),
-        () => ({ r: p.floor(80 + p.random(80)), g: p.floor(140 + p.random(80)), b: p.floor(120 + p.random(80)) }),
-      ];
-      return mediumTypes[p.floor(p.random(mediumTypes.length))]();
-    };
-    const generateBrightColor = () => {
-      const brightTypes = [
-        () => ({ r: 0, g: p.floor(180 + p.random(75)), b: p.floor(200 + p.random(55)) }),
-        () => ({ r: p.floor(200 + p.random(55)), g: p.floor(180 + p.random(75)), b: p.floor(80 + p.random(80)) }),
-        () => ({ r: p.floor(100 + p.random(80)), g: p.floor(200 + p.random(55)), b: p.floor(180 + p.random(75)) }),
-      ];
-      return brightTypes[p.floor(p.random(brightTypes.length))]();
-    };
+    const generateMediumColor = () =>
+      chromaRgb(biasedHue(variant, 2, drift, hueSkew), p.random(50, 92), p.random(48, 82));
+    const generateBrightColor = () =>
+      chromaRgb(biasedHue(variant, 3, drift, hueSkew), p.random(72, 100), p.random(76, 100));
     const generateColor = (preferDark = false) => {
-      if (preferDark) return p.random() < 0.8 ? generateDarkColor() : generateMediumColor();
+      if (preferDark) return p.random() < 0.5 ? generateDarkColor() : generateMediumColor();
       const rand = p.random();
-      if (rand < 0.6) return generateDarkColor();
-      if (rand < 0.9) return generateMediumColor();
+      if (rand < 0.28) return generateDarkColor();
+      if (rand < 0.72) return generateMediumColor();
       return generateBrightColor();
     };
-    const generateWhite = () => (p.random() < 0.05 ? { r: 255, g: 245, b: 220 } : generateMediumColor());
+    const generateWhite = () =>
+      p.random() < 0.1
+        ? chromaRgb(p.random(28, 48), p.random(10, 28), p.random(90, 100))
+        : generateMediumColor();
     const rgbToHex = (r, g, b) => `#${[r, g, b].map((x) => { const hex = x.toString(16); return hex.length === 1 ? "0" + hex : hex; }).join("")}`;
     const rgba = (r, g, b, a) => `rgba(${r}, ${g}, ${b}, ${a})`;
     const gradients = [];
-    const color1 = generateColor(true);
-    const alpha1 = 0.4 + p.random(0.25);
-    const angle1 = p.random(360);
+    const color1 = generateColor(variant === 0);
+    const alpha1 = 0.32 + p.random(0.2);
+    const angle1 = (p.random(360) + angleShift + 360) % 360;
     const fade1 = 30 + p.random(20);
     gradients.push(`linear-gradient(${angle1}deg, ${rgba(color1.r, color1.g, color1.b, alpha1)} 0%, rgba(0, 0, 0, 0) ${fade1}%)`);
     const color2a = generateColor(true);
     const color2b = p.random() < 0.7 ? generateMediumColor() : generateColor(true);
-    gradients.push(`linear-gradient(180deg, ${rgbToHex(color2a.r, color2a.g, color2a.b)} 0%, ${rgbToHex(color2b.r, color2b.g, color2b.b)} 100%)`);
+    gradients.push(`linear-gradient(${spineDeg}deg, ${rgbToHex(color2a.r, color2a.g, color2a.b)} 0%, ${rgbToHex(color2b.r, color2b.g, color2b.b)} 100%)`);
     const color3a = generateColor(true);
     const color3b = generateMediumColor();
     const color3c = p.random() < 0.3 ? generateBrightColor() : generateMediumColor();
-    const angle3 = p.random(360);
+    const angle3 = (p.random(360) + angleShift * 0.85 + 360) % 360;
     const stop3 = 40 + p.random(20);
     gradients.push(`linear-gradient(${angle3}deg, ${rgbToHex(color3a.r, color3a.g, color3a.b)} 0%, ${rgbToHex(color3b.r, color3b.g, color3b.b)} ${stop3}%, ${rgbToHex(color3c.r, color3c.g, color3c.b)} 100%)`);
     const color4a = generateColor(true);
     const color4b = generateMediumColor();
     const color4c = generateWhite();
-    const angle4 = p.random(360);
+    const angle4 = (p.random(360) + angleShift * 1.1 + 360) % 360;
     const stop4 = 40 + p.random(20);
     gradients.push(`linear-gradient(${angle4}deg, ${rgbToHex(color4a.r, color4a.g, color4a.b)} 0%, ${rgbToHex(color4b.r, color4b.g, color4b.b)} ${stop4}%, ${rgbToHex(color4c.r, color4c.g, color4c.b)} 100%)`);
     const color5a = generateColor(true);
     const color5b = p.random() < 0.4 ? generateBrightColor() : generateMediumColor();
     const size5 = 150 + p.random(100);
     const size5y = size5 * (1.8 + p.random(1.2));
-    const pos5x = p.random(100);
-    const pos5y = p.random(100);
+    const pos5x = p.constrain(radialX + p.random(-6, 6), 0, 100);
+    const pos5y = p.constrain(radialY + p.random(-8, 8), 0, 100);
     gradients.push(`radial-gradient(${size5}% ${size5y}% at ${pos5x}% ${pos5y}%, ${rgbToHex(color5a.r, color5a.g, color5a.b)} 0%, ${rgbToHex(color5b.r, color5b.g, color5b.b)} 100%)`);
     const color6a = generateColor(true);
     const color6b = generateMediumColor();
     const color6c = p.random() < 0.3 ? generateBrightColor() : generateMediumColor();
-    const angle6 = p.random(360);
+    const angle6 = (p.random(360) + angleShift * 0.75 + 360) % 360;
     const stop6a = p.random(10);
     const stop6b = 40 + p.random(20);
     gradients.push(`linear-gradient(${angle6}deg, ${rgbToHex(color6a.r, color6a.g, color6a.b)} ${stop6a}%, ${rgbToHex(color6b.r, color6b.g, color6b.b)} ${stop6b}%, ${rgbToHex(color6c.r, color6c.g, color6c.b)} 100%)`);
@@ -156,130 +179,100 @@ const sketch = (p) => {
     const color7c = generateWhite();
     const size7 = 120 + p.random(80);
     const size7y = size7 * (1.2 + p.random(0.6));
-    const pos7x = p.random(100);
-    const pos7y = p.random(100);
+    const pos7x = p.constrain(radialX2 + p.random(-5, 5), 0, 100);
+    const pos7y = p.constrain(radialY2 + p.random(-7, 7), 0, 100);
     const stop7 = 40 + p.random(20);
     gradients.push(`radial-gradient(${size7}% ${size7y}% at ${pos7x}% ${pos7y}%, ${rgbToHex(color7a.r, color7a.g, color7a.b)} 0%, ${rgbToHex(color7b.r, color7b.g, color7b.b)} ${stop7}%, ${rgbToHex(color7c.r, color7c.g, color7c.b)} 100%)`);
-    return gradients.join(", ");
-  };
-
-  p.generateTopGradient = () => {
-    const generateDarkColor = () => {
-      const darkTypes = [
-        () => ({ r: 0, g: p.floor(40 + p.random(60)), b: p.floor(70 + p.random(80)) }),
-        () => ({ r: 0, g: p.floor(50 + p.random(50)), b: p.floor(100 + p.random(60)) }),
-        () => ({ r: 0, g: p.floor(60 + p.random(50)), b: p.floor(120 + p.random(50)) }),
-        () => ({ r: p.floor(20 + p.random(30)), g: 0, b: p.floor(120 + p.random(100)) }),
-        () => ({ r: p.floor(30 + p.random(40)), g: p.floor(50 + p.random(50)), b: p.floor(130 + p.random(50)) }),
-        () => ({ r: p.floor(60 + p.random(60)), g: 0, b: 0 }),
-        () => ({ r: p.floor(80 + p.random(40)), g: p.floor(30 + p.random(30)), b: 0 }),
-        () => ({ r: p.floor(90 + p.random(30)), g: p.floor(50 + p.random(20)), b: 0 }),
-      ];
-      return darkTypes[p.floor(p.random(darkTypes.length))]();
-    };
-    const generateMediumColor = () => {
-      const mediumTypes = [
-        () => ({ r: 0, g: p.floor(100 + p.random(80)), b: p.floor(120 + p.random(60)) }),
-        () => ({ r: 0, g: p.floor(70 + p.random(80)), b: p.floor(100 + p.random(80)) }),
-        () => ({ r: p.floor(30 + p.random(50)), g: p.floor(100 + p.random(80)), b: p.floor(150 + p.random(50)) }),
-        () => ({ r: p.floor(150 + p.random(80)), g: p.floor(100 + p.random(100)), b: p.floor(150 + p.random(80)) }),
-      ];
-      return mediumTypes[p.floor(p.random(mediumTypes.length))]();
-    };
-    const generateBrightColor = () => {
-      const brightTypes = [
-        () => ({ r: p.floor(220 + p.random(35)), g: 0, b: p.floor(180 + p.random(75)) }),
-        () => ({ r: 0, g: p.floor(150 + p.random(105)), b: p.floor(200 + p.random(55)) }),
-        () => ({ r: p.floor(30 + p.random(50)), g: p.floor(200 + p.random(55)), b: p.floor(30 + p.random(50)) }),
-      ];
-      return brightTypes[p.floor(p.random(brightTypes.length))]();
-    };
-    const generateColor = (preferDark = false) => {
-      if (preferDark) return p.random() < 0.8 ? generateDarkColor() : generateMediumColor();
-      const rand = p.random();
-      if (rand < 0.6) return generateDarkColor();
-      if (rand < 0.9) return generateMediumColor();
-      return generateBrightColor();
-    };
-    const generateWhite = () => (p.random() < 0.05 ? { r: 255, g: 255, b: 255 } : generateMediumColor());
-    const rgbToHex = (r, g, b) => `#${[r, g, b].map((x) => { const hex = x.toString(16); return hex.length === 1 ? "0" + hex : hex; }).join("")}`;
-    const rgba = (r, g, b, a) => `rgba(${r}, ${g}, ${b}, ${a})`;
-    const gradients = [];
-    const color1 = generateColor(true);
-    const alpha1 = 0.4 + p.random(0.25);
-    const angle1 = p.random(360);
-    const fade1 = 30 + p.random(20);
-    gradients.push(`linear-gradient(${angle1}deg, ${rgba(color1.r, color1.g, color1.b, alpha1)} 0%, rgba(0, 0, 0, 0) ${fade1}%)`);
-    const color2a = generateColor(true);
-    const color2b = p.random() < 0.7 ? generateMediumColor() : generateColor(true);
-    gradients.push(`linear-gradient(180deg, ${rgbToHex(color2a.r, color2a.g, color2a.b)} 0%, ${rgbToHex(color2b.r, color2b.g, color2b.b)} 100%)`);
-    const color3a = generateColor(true);
-    const color3b = generateMediumColor();
-    const color3c = p.random() < 0.3 ? generateBrightColor() : generateMediumColor();
-    const angle3 = p.random(360);
-    const stop3 = 40 + p.random(20);
-    gradients.push(`linear-gradient(${angle3}deg, ${rgbToHex(color3a.r, color3a.g, color3a.b)} 0%, ${rgbToHex(color3b.r, color3b.g, color3b.b)} ${stop3}%, ${rgbToHex(color3c.r, color3c.g, color3c.b)} 100%)`);
-    const color4a = generateColor(true);
-    const color4b = generateMediumColor();
-    const color4c = generateWhite();
-    const angle4 = p.random(360);
-    const stop4 = 40 + p.random(20);
-    gradients.push(`linear-gradient(${angle4}deg, ${rgbToHex(color4a.r, color4a.g, color4a.b)} 0%, ${rgbToHex(color4b.r, color4b.g, color4b.b)} ${stop4}%, ${rgbToHex(color4c.r, color4c.g, color4c.b)} 100%)`);
-    const color5a = generateColor(true);
-    const color5b = p.random() < 0.4 ? generateBrightColor() : generateMediumColor();
-    const size5 = 150 + p.random(100);
-    const size5y = size5 * (1.8 + p.random(1.2));
-    const pos5x = p.random(100);
-    const pos5y = p.random(100);
-    gradients.push(`radial-gradient(${size5}% ${size5y}% at ${pos5x}% ${pos5y}%, ${rgbToHex(color5a.r, color5a.g, color5a.b)} 0%, ${rgbToHex(color5b.r, color5b.g, color5b.b)} 100%)`);
-    const color6a = generateColor(true);
-    const color6b = generateMediumColor();
-    const color6c = p.random() < 0.3 ? generateBrightColor() : generateMediumColor();
-    const angle6 = p.random(360);
-    const stop6a = p.random(10);
-    const stop6b = 40 + p.random(20);
-    gradients.push(`linear-gradient(${angle6}deg, ${rgbToHex(color6a.r, color6a.g, color6a.b)} ${stop6a}%, ${rgbToHex(color6b.r, color6b.g, color6b.b)} ${stop6b}%, ${rgbToHex(color6c.r, color6c.g, color6c.b)} 100%)`);
-    const color7a = p.random() < 0.3 ? generateBrightColor() : generateColor(true);
-    const color7b = generateMediumColor();
-    const color7c = generateWhite();
-    const size7 = 120 + p.random(80);
-    const size7y = size7 * (1.2 + p.random(0.6));
-    const pos7x = p.random(100);
-    const pos7y = p.random(100);
-    const stop7 = 40 + p.random(20);
-    gradients.push(`radial-gradient(${size7}% ${size7y}% at ${pos7x}% ${pos7y}%, ${rgbToHex(color7a.r, color7a.g, color7a.b)} 0%, ${rgbToHex(color7b.r, color7b.g, color7b.b)} ${stop7}%, ${rgbToHex(color7c.r, color7c.g, color7c.b)} 100%)`);
-    return gradients.join(", ");
-  };
-
-  p.drawNextDrumGroup = () => {
-    const halfW = p.width / 2;
-    const halfH = p.height / 2;
-    const margin = Math.min(halfW, halfH) * DRUM_EDGE_MARGIN;
-    const bandW = halfW * DRUM_EDGE_BAND;
-    const bandH = halfH * DRUM_EDGE_BAND;
-    const edge = p.floor(p.random(4));
-    let x, y;
-    if (edge === 0) {
-      x = p.random(-halfW + margin, halfW - margin);
-      y = p.random(-halfH, -halfH + bandH);
-    } else if (edge === 1) {
-      x = p.random(halfW - bandW, halfW);
-      y = p.random(-halfH + margin, halfH - margin);
-    } else if (edge === 2) {
-      x = p.random(-halfW + margin, halfW - margin);
-      y = p.random(halfH - bandH, halfH);
-    } else {
-      x = p.random(-halfW, -halfW + bandW);
-      y = p.random(-halfH + margin, halfH - margin);
+    if (p.random() < 0.45) {
+      const i = 1 + p.floor(p.random(5));
+      const t = gradients[i];
+      gradients[i] = gradients[i + 1];
+      gradients[i + 1] = t;
     }
-    p.evolHue = (p.evolHue + p.dHue + 360) % 360;
-    const willSpin = p.random() < 0.8;
-    const spinSpeedZ = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00025, 0.0012) : 0;
-    const spinSpeedX = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.0002, 0.0009) : 0;
-    const spinSpeedY = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.0002, 0.0009) : 0;
-    const tiltX = willSpin ? p.random(-0.18, 0.18) : 0;
-    const tiltY = willSpin ? p.random(-0.18, 0.18) : 0;
-    p.drawnGroups.push({ type: "drum", x, y, hue: p.evolHue, zOffset: DRUM_Z_OFFSET, materialType: p.random() < MATERIAL_OTHER_CHANCE ? p.random(MATERIAL_OTHER_TYPES) : "emissive", spinSpeedZ, spinSpeedX, spinSpeedY, tiltX, tiltY });
+    return gradients.join(", ");
+  };
+
+  p.generateTopGradient = (variant = 0) => {
+    const angleShift = variant * 127 + p.random(-22, 22);
+    const radialX = variant === 0 ? p.random(8, 40) : p.random(60, 92);
+    const radialY = variant === 0 ? p.random(20, 55) : p.random(45, 85);
+    const radialX2 = variant === 0 ? p.random(12, 44) : p.random(56, 88);
+    const radialY2 = variant === 0 ? p.random(25, 60) : p.random(40, 75);
+    const spineDeg = 175 + variant * 55 + p.random(-16, 16);
+    const hueSkew = variant === 0 ? -72 : 104;
+    const drift = 61;
+    const generateDarkColor = () => {
+      if (p.random() < 0.08) return chromaRgb(biasedHue(variant, 8, drift, hueSkew), p.random(10, 30), p.random(36, 60));
+      return chromaRgb(biasedHue(variant, 4, drift, hueSkew), p.random(46, 90), p.random(30, 56));
+    };
+    const generateMediumColor = () =>
+      chromaRgb(biasedHue(variant, 5, drift, hueSkew), p.random(50, 90), p.random(46, 80));
+    const generateBrightColor = () =>
+      chromaRgb(biasedHue(variant, 6, drift, hueSkew), p.random(72, 100), p.random(74, 100));
+    const generateColor = (preferDark = false) => {
+      if (preferDark) return p.random() < 0.48 ? generateDarkColor() : generateMediumColor();
+      const rand = p.random();
+      if (rand < 0.26) return generateDarkColor();
+      if (rand < 0.7) return generateMediumColor();
+      return generateBrightColor();
+    };
+    const generateWhite = () =>
+      p.random() < 0.1
+        ? chromaRgb(p.random(0, 360), p.random(8, 26), p.random(90, 100))
+        : generateMediumColor();
+    const rgbToHex = (r, g, b) => `#${[r, g, b].map((x) => { const hex = x.toString(16); return hex.length === 1 ? "0" + hex : hex; }).join("")}`;
+    const rgba = (r, g, b, a) => `rgba(${r}, ${g}, ${b}, ${a})`;
+    const gradients = [];
+    const color1 = generateColor(variant === 1);
+    const alpha1 = 0.32 + p.random(0.2);
+    const angle1 = (p.random(360) + angleShift + 360) % 360;
+    const fade1 = 30 + p.random(20);
+    gradients.push(`linear-gradient(${angle1}deg, ${rgba(color1.r, color1.g, color1.b, alpha1)} 0%, rgba(0, 0, 0, 0) ${fade1}%)`);
+    const color2a = generateColor(true);
+    const color2b = p.random() < 0.7 ? generateMediumColor() : generateColor(true);
+    gradients.push(`linear-gradient(${spineDeg}deg, ${rgbToHex(color2a.r, color2a.g, color2a.b)} 0%, ${rgbToHex(color2b.r, color2b.g, color2b.b)} 100%)`);
+    const color3a = generateColor(true);
+    const color3b = generateMediumColor();
+    const color3c = p.random() < 0.3 ? generateBrightColor() : generateMediumColor();
+    const angle3 = (p.random(360) + angleShift * 0.9 + 360) % 360;
+    const stop3 = 40 + p.random(20);
+    gradients.push(`linear-gradient(${angle3}deg, ${rgbToHex(color3a.r, color3a.g, color3a.b)} 0%, ${rgbToHex(color3b.r, color3b.g, color3b.b)} ${stop3}%, ${rgbToHex(color3c.r, color3c.g, color3c.b)} 100%)`);
+    const color4a = generateColor(true);
+    const color4b = generateMediumColor();
+    const color4c = generateWhite();
+    const angle4 = (p.random(360) + angleShift * 1.05 + 360) % 360;
+    const stop4 = 40 + p.random(20);
+    gradients.push(`linear-gradient(${angle4}deg, ${rgbToHex(color4a.r, color4a.g, color4a.b)} 0%, ${rgbToHex(color4b.r, color4b.g, color4b.b)} ${stop4}%, ${rgbToHex(color4c.r, color4c.g, color4c.b)} 100%)`);
+    const color5a = generateColor(true);
+    const color5b = p.random() < 0.4 ? generateBrightColor() : generateMediumColor();
+    const size5 = 150 + p.random(100);
+    const size5y = size5 * (1.8 + p.random(1.2));
+    const pos5x = p.constrain(radialX + p.random(-6, 6), 0, 100);
+    const pos5y = p.constrain(radialY + p.random(-8, 8), 0, 100);
+    gradients.push(`radial-gradient(${size5}% ${size5y}% at ${pos5x}% ${pos5y}%, ${rgbToHex(color5a.r, color5a.g, color5a.b)} 0%, ${rgbToHex(color5b.r, color5b.g, color5b.b)} 100%)`);
+    const color6a = generateColor(true);
+    const color6b = generateMediumColor();
+    const color6c = p.random() < 0.3 ? generateBrightColor() : generateMediumColor();
+    const angle6 = (p.random(360) + angleShift * 0.7 + 360) % 360;
+    const stop6a = p.random(10);
+    const stop6b = 40 + p.random(20);
+    gradients.push(`linear-gradient(${angle6}deg, ${rgbToHex(color6a.r, color6a.g, color6a.b)} ${stop6a}%, ${rgbToHex(color6b.r, color6b.g, color6b.b)} ${stop6b}%, ${rgbToHex(color6c.r, color6c.g, color6c.b)} 100%)`);
+    const color7a = p.random() < 0.3 ? generateBrightColor() : generateColor(true);
+    const color7b = generateMediumColor();
+    const color7c = generateWhite();
+    const size7 = 120 + p.random(80);
+    const size7y = size7 * (1.2 + p.random(0.6));
+    const pos7x = p.constrain(radialX2 + p.random(-5, 5), 0, 100);
+    const pos7y = p.constrain(radialY2 + p.random(-7, 7), 0, 100);
+    const stop7 = 40 + p.random(20);
+    gradients.push(`radial-gradient(${size7}% ${size7y}% at ${pos7x}% ${pos7y}%, ${rgbToHex(color7a.r, color7a.g, color7a.b)} 0%, ${rgbToHex(color7b.r, color7b.g, color7b.b)} ${stop7}%, ${rgbToHex(color7c.r, color7c.g, color7c.b)} 100%)`);
+    if (p.random() < 0.45) {
+      const i = 1 + p.floor(p.random(5));
+      const t = gradients[i];
+      gradients[i] = gradients[i + 1];
+      gradients[i + 1] = t;
+    }
+    return gradients.join(", ");
   };
 
   p.drawNextGroup = (zOffset = 0) => {
@@ -291,13 +284,23 @@ const sketch = (p) => {
     if (!currGroup) return;
     p.visitedGroups.add(currGroup.key);
     p.evolHue = (p.evolHue + p.dHue + 360) % 360;
-    const willSpin = p.random() < 0.8;
+    const willSpin = p.random() < 0.1;
     const spinSpeedZ = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00018, 0.0009) : 0;
     const spinSpeedX = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00015, 0.0007) : 0;
     const spinSpeedY = willSpin ? (p.random() < 0.5 ? -1 : 1) * p.random(0.00015, 0.0007) : 0;
     const tiltX = willSpin ? p.random(-0.14, 0.14) : 0;
     const tiltY = willSpin ? p.random(-0.14, 0.14) : 0;
-    p.drawnGroups.push({ group: currGroup, hue: p.evolHue, zOffset, materialType: p.random() < MATERIAL_OTHER_CHANCE ? p.random(MATERIAL_OTHER_TYPES) : "emissive", spinSpeedZ, spinSpeedX, spinSpeedY, tiltX, tiltY });
+    p.drawnGroups.push({
+      group: currGroup,
+      hue: p.evolHue,
+      zOffset,
+      materialType: p.random() < MATERIAL_OTHER_CHANCE ? p.random(MATERIAL_OTHER_TYPES) : "emissive",
+      spinSpeedZ,
+      spinSpeedX,
+      spinSpeedY,
+      tiltX,
+      tiltY,
+    });
     const repr = currGroup.values().next().value;
     const neighGroups = [];
     dneighbors.forEach((dk) => {
@@ -335,26 +338,40 @@ const sketch = (p) => {
     if (materialType) p.applyTorusMaterial(materialType, c);
     else p.fill(c);
     const r = p.radius * TORUS_SCALE;
-    p.torus(r, r * 0.35);
+    p.torus(r, r * 0.15);
     p.pop();
   };
 
   p.executeTrack0 = (note) => { for (let i = 0; i < GROUPS_PER_CUE; i++) p.drawNextGroup(); };
   p.setGradientBg = () => {
-    const bottom = p.gradientTop ?? p.generateTopGradient();
-    const top = p.gradientBottom ?? p.generateBottomGradient();
-    if (p.gradientTopEl) {
-      p.gradientTopEl.style.background = top;
-      p.gradientTopEl.style.backgroundBlendMode = "hard-light, overlay, overlay, overlay, difference, difference, normal";
+    const upperLeft = p.gradientTopLeft ?? p.generateTopGradient(0);
+    const upperRight = p.gradientTopRight ?? p.generateTopGradient(1);
+    const lowerLeft = p.gradientBottomLeft ?? p.generateBottomGradient(0);
+    const lowerRight = p.gradientBottomRight ?? p.generateBottomGradient(1);
+    const upperLeftBlend = "soft-light, screen, overlay, difference, exclusion, overlay, normal";
+    const upperRightBlend = "overlay, soft-light, overlay, hue, lighten, screen, normal";
+    const lowerBlend = "overlay, lighten, overlay, soft-light, soft-light, overlay, normal";
+    if (p.gradientTopLeftEl) {
+      p.gradientTopLeftEl.style.background = upperLeft;
+      p.gradientTopLeftEl.style.backgroundBlendMode = upperLeftBlend;
     }
-    if (p.gradientBottomEl) {
-      p.gradientBottomEl.style.background = bottom;
-      p.gradientBottomEl.style.backgroundBlendMode = "normal, overlay, overlay, overlay, soft-light, overlay, overlay";
+    if (p.gradientTopRightEl) {
+      p.gradientTopRightEl.style.background = upperRight;
+      p.gradientTopRightEl.style.backgroundBlendMode = upperRightBlend;
+    }
+    if (p.gradientBottomLeftEl) {
+      p.gradientBottomLeftEl.style.background = lowerLeft;
+      p.gradientBottomLeftEl.style.backgroundBlendMode = lowerBlend;
+    }
+    if (p.gradientBottomRightEl) {
+      p.gradientBottomRightEl.style.background = lowerRight;
+      p.gradientBottomRightEl.style.backgroundBlendMode = lowerBlend;
     }
   };
 
   p.executeTrack8 = (note) => {
-    p.gradientTop = p.generateTopGradient();
+    p.gradientTopLeft = p.generateTopGradient(0);
+    p.gradientTopRight = p.generateTopGradient(1);
     p.setGradientBg();
     const duration = (note.durationTicks / p.PPQ) * (60 / p.bpm);
     p.blackFadeTop.active = true;
@@ -367,9 +384,9 @@ const sketch = (p) => {
     for (let i = 0; i < 12; i++) p.drawNextGroup(p.track11Z);
     p.track11Z += TRACK11_Z_STEP;
   };
-  p.executeTrack12 = (note) => { for (let i = 0; i < GROUPS_PER_CUE; i++) p.drawNextDrumGroup(); };
   p.executeTrack13 = (note) => {
-    p.gradientBottom = p.generateBottomGradient();
+    p.gradientBottomLeft = p.generateBottomGradient(0);
+    p.gradientBottomRight = p.generateBottomGradient(1);
     p.setGradientBg();
     const duration = (note.durationTicks / p.PPQ) * (60 / p.bpm);
     p.blackFadeBottom.active = true;
@@ -378,19 +395,27 @@ const sketch = (p) => {
   };
 
   p.setup = () => {
-    p.gradientTop = p.generateTopGradient();
-    p.gradientBottom = p.generateBottomGradient();
+    p.gradientTopLeft = p.generateTopGradient(0);
+    p.gradientTopRight = p.generateTopGradient(1);
+    p.gradientBottomLeft = p.generateBottomGradient(0);
+    p.gradientBottomRight = p.generateBottomGradient(1);
 
     const wrapper = document.createElement("div");
     wrapper.style.cssText = "position:fixed;inset:0;z-index:0;";
-    p.gradientTopEl = document.createElement("div");
-    p.gradientTopEl.style.cssText = "position:absolute;top:0;left:0;width:100%;height:50%;";
-    p.gradientBottomEl = document.createElement("div");
-    p.gradientBottomEl.style.cssText = "position:absolute;top:50%;left:0;width:100%;height:50%;";
+    p.gradientTopLeftEl = document.createElement("div");
+    p.gradientTopLeftEl.style.cssText = "position:absolute;top:0;left:0;width:50%;height:50%;";
+    p.gradientTopRightEl = document.createElement("div");
+    p.gradientTopRightEl.style.cssText = "position:absolute;top:0;left:50%;width:50%;height:50%;";
+    p.gradientBottomLeftEl = document.createElement("div");
+    p.gradientBottomLeftEl.style.cssText = "position:absolute;top:50%;left:0;width:50%;height:50%;";
+    p.gradientBottomRightEl = document.createElement("div");
+    p.gradientBottomRightEl.style.cssText = "position:absolute;top:50%;left:50%;width:50%;height:50%;";
     const tunnelEl = document.createElement("div");
     tunnelEl.style.cssText = "position:absolute;left:50%;top:50%;width:55vmin;height:55vmin;margin-left:-27.5vmin;margin-top:-27.5vmin;border-radius:50%;background:radial-gradient(circle, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 25%, rgba(0,0,0,0.2) 55%, transparent 75%);pointer-events:none;";
-    wrapper.appendChild(p.gradientTopEl);
-    wrapper.appendChild(p.gradientBottomEl);
+    wrapper.appendChild(p.gradientTopLeftEl);
+    wrapper.appendChild(p.gradientTopRightEl);
+    wrapper.appendChild(p.gradientBottomLeftEl);
+    wrapper.appendChild(p.gradientBottomRightEl);
     wrapper.appendChild(tunnelEl);
     document.body.insertBefore(wrapper, document.body.firstChild);
 
@@ -430,9 +455,7 @@ const sketch = (p) => {
       }
     }
 
-    // p.orbitControl();
-    p.ambientLight(80);
-    p.directionalLight(200, 200, 200, 0.5, 0.5, -1);
+    p.ambientLight(180);
     p.noStroke();
     p.translate(0, 0, SCENE_Z);
 
@@ -443,11 +466,11 @@ const sketch = (p) => {
       const visibleH = 2 * dist * Math.tan(fovy / 2) * 2;
       const visibleW = visibleH * (p.width / p.height);
 
-      const drawFadeArcStack = ({ yOffset, startAngle, stopAngle, opacity, count = 24 }) => {
+      const drawFadeArcStack = ({ yOffset, startAngle, stopAngle, opacity, count = 48, minRFactor = 0.04, opacityMul = 1, angleOffset = 0, ringAlphaBoost = 1 }) => {
         const maxR = Math.max(visibleW, visibleH) * 0.78;
-        const minR = maxR * 0.04;
+        const minR = maxR * minRFactor;
         const band = (maxR - minR) / count;
-        const overlap = band * 0.03;
+        const overlap = band * 0.02;
         const steps = 42;
 
         p.push();
@@ -457,7 +480,7 @@ const sketch = (p) => {
           const r0 = minR + i * band;
           const r1 = minR + (i + 1) * band + overlap;
           const layerT = i / Math.max(1, count - 1);
-          const a = opacity * (0.12 + 0.55 * (1 - layerT));
+          const a = p.constrain(opacity * opacityMul * ringAlphaBoost * (0.12 + 0.55 * (1 - layerT)), 0, 1);
           p.noStroke();
           p.fill(0, 0, 0, a * 255);
           p.push();
@@ -465,12 +488,12 @@ const sketch = (p) => {
           p.beginShape();
           for (let s = 0; s <= steps; s++) {
             const t = s / steps;
-            const ang = p.lerp(startAngle, stopAngle, t);
+            const ang = p.lerp(startAngle, stopAngle, t) + angleOffset;
             p.vertex(p.cos(ang) * r1, p.sin(ang) * r1);
           }
           for (let s = steps; s >= 0; s--) {
             const t = s / steps;
-            const ang = p.lerp(startAngle, stopAngle, t);
+            const ang = p.lerp(startAngle, stopAngle, t) + angleOffset;
             p.vertex(p.cos(ang) * r0, p.sin(ang) * r0);
           }
           p.endShape(p.CLOSE);
@@ -485,7 +508,7 @@ const sketch = (p) => {
       if (p.blackFadeTop.active) {
         const elapsed = p.song.currentTime() * 1000 - p.blackFadeTop.startTime;
         const progress = p.constrain(elapsed / p.blackFadeTop.duration, 0, 1);
-        const opacity = Math.pow(progress, 0.75);
+        const opacity = p.constrain(Math.pow(progress, FADE_TOP_EASE_POW) * FADE_TOP_MAX_OPACITY, 0, 1);
         drawFadeArcStack({
           yOffset: 0,
           startAngle: p.PI,
@@ -496,12 +519,13 @@ const sketch = (p) => {
       if (p.blackFadeBottom.active) {
         const elapsed = p.song.currentTime() * 1000 - p.blackFadeBottom.startTime;
         const progress = p.constrain(elapsed / p.blackFadeBottom.duration, 0, 1);
-        const opacity = Math.pow(progress, 0.5);
+        const opacity = p.constrain(Math.pow(progress, FADE_BOTTOM_EASE_POW) * FADE_BOTTOM_MAX_OPACITY, 0, 1);
         drawFadeArcStack({
           yOffset: 0,
           startAngle: 0,
           stopAngle: p.PI,
           opacity,
+          ringAlphaBoost: FADE_BOTTOM_RING_ALPHA_BOOST,
         });
       }
       p.pop();
@@ -509,36 +533,15 @@ const sketch = (p) => {
 
     const byZ = [...p.drawnGroups].sort((a, b) => (a.zOffset ?? 0) - (b.zOffset ?? 0));
     byZ.forEach((item) => {
-      if (item.type === "drum") {
-        p.push();
-        p.translate(item.x, item.y, item.zOffset);
-        p.noStroke();
-        const t = p.song ? p.song.currentTime() * 1000 : p.millis();
-        const rotX = item.spinSpeedX ? t * item.spinSpeedX : 0;
-        const rotY = item.spinSpeedY ? t * item.spinSpeedY : 0;
-        const rotZ = item.spinSpeedZ ? t * item.spinSpeedZ : 0;
-        if (item.tiltX) p.rotateX(item.tiltX);
-        if (item.tiltY) p.rotateY(item.tiltY);
-        if (rotX) p.rotateX(rotX);
-        if (rotY) p.rotateY(rotY);
-        if (rotZ) p.rotateZ(rotZ);
-        const c = p.color(`hsl(${item.hue}, 100%, 50%)`);
-        if (item.materialType) p.applyTorusMaterial(item.materialType, c);
-        else p.fill(c);
-        const r = p.radius * TORUS_SCALE;
-        p.torus(r, r * 0.35);
-        p.pop();
-      } else {
-        const { group, hue, zOffset = 0, materialType = null, spinSpeedZ = 0, spinSpeedX = 0, spinSpeedY = 0, tiltX = 0, tiltY = 0 } = item;
-        p.push();
-        p.translate(0, 0, zOffset);
-        const t = p.song ? p.song.currentTime() * 1000 : p.millis();
-        const rotX = spinSpeedX ? t * spinSpeedX : 0;
-        const rotY = spinSpeedY ? t * spinSpeedY : 0;
-        const rotZ = spinSpeedZ ? t * spinSpeedZ : 0;
-        group.forEach((hex) => p.drawHex(hex, hue, materialType, rotX, rotY, rotZ, tiltX, tiltY));
-        p.pop();
-      }
+      const { group, hue, zOffset = 0, materialType = null, spinSpeedZ = 0, spinSpeedX = 0, spinSpeedY = 0, tiltX = 0, tiltY = 0 } = item;
+      p.push();
+      p.translate(0, 0, zOffset);
+      const t = p.song ? p.song.currentTime() * 1000 : p.millis();
+      const rotX = spinSpeedX ? t * spinSpeedX : 0;
+      const rotY = spinSpeedY ? t * spinSpeedY : 0;
+      const rotZ = spinSpeedZ ? t * spinSpeedZ : 0;
+      group.forEach((hex) => p.drawHex(hex, hue, materialType, rotX, rotY, rotZ, tiltX, tiltY));
+      p.pop();
     });
   };
 
