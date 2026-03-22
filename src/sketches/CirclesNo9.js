@@ -109,7 +109,7 @@ const sketch = (p) => {
   p.preload = () => {
     p.song = p.loadSound(audio, (sound) => {
       p.audioSampleRate = sound.sampleRate();
-      p.totalAnimationFrames = 500;
+      p.totalAnimationFrames = Math.floor(sound.duration() * 60);
       p.loadMidi();
     });
     p.song.onended(() => {
