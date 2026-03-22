@@ -1,6 +1,7 @@
 import p5 from "p5";
 import "p5/lib/addons/p5.sound";
 import { Midi } from "@tonejs/midi";
+import initCapture from '@/lib/p5.capture.js';
 import {
   Group,
   RADIUS_MINI,
@@ -104,7 +105,11 @@ const sketch = (p) => {
   };
 
   p.preload = () => {
-    p.song = p.loadSound(audio, () => p.loadMidi());
+    p.song = p.loadSound(audio, (sound) => {
+      p.audioSampleRate = sound.sampleRate();
+      p.totalAnimationFrames = 500;
+      p.loadMidi();
+    });
     p.song.onended(() => {
       if (p.canvas) {
         p.canvas.classList.add("p5Canvas--cursor-play");
@@ -452,10 +457,13 @@ const sketch = (p) => {
     p.visitedGroups = new Set();
     p.drawnGroups = [];
     p.track11Z = TRACK11_Z_START;
+
+    // initCapture(p, { prefix: "CirclesNo9", enabled: true });
   };
 
   p.draw = () => {
     p.clear();
+    p.resetMatrix();
 
     if (p.song) {
       if (p.blackFadeTop.active && p.blackFadeTop.duration > 0) {
@@ -585,7 +593,12 @@ const sketch = (p) => {
   };
 
   p.mousePressed = () => {
-    if (!p.audioLoaded || !p.song) return;
+    if (!p.audioLoaded) return;
+    if (p.captureEnabled) {
+      p.startCapture();
+      return;
+    }
+    if (!p.song) return;
     if (p.song.isPlaying()) {
       p.song.pause();
       p.canvas.classList.add("p5Canvas--cursor-play");
