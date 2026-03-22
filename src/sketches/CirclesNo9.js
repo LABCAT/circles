@@ -1,7 +1,9 @@
 import p5 from "p5";
 import "p5/lib/addons/p5.sound";
 import { Midi } from "@tonejs/midi";
-import initCapture from '@/lib/p5.capture.js';
+import initCapture from "@/lib/p5.capture.js";
+import { createDomLayerCaptureBackground } from "@/lib/domLayerCaptureBackground.js";
+import { compositeDomCaptureExtension } from "@/lib/extensions/compositeDomCapture.js";
 import {
   Group,
   RADIUS_MINI,
@@ -458,7 +460,12 @@ const sketch = (p) => {
     p.drawnGroups = [];
     p.track11Z = TRACK11_Z_START;
 
-    // initCapture(p, { prefix: "CirclesNo9", enabled: true });
+    initCapture(p, {
+      prefix: "CirclesNo9",
+      enabled: false,
+      captureCSSBackground: true,
+      extension: compositeDomCaptureExtension({ background: createDomLayerCaptureBackground(wrapper) }),
+    });
   };
 
   p.draw = () => {

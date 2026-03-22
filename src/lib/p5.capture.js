@@ -5,10 +5,13 @@ export default function initCapture(p, options = {}) {
   const prefix = isOptionsObject ? options.prefix ?? options.captureFilePrefix : options;
   const enabled = isOptionsObject ? !!options.enabled : options !== undefined ? true : p.captureEnabled ?? false;
   const captureCSSBackground = isOptionsObject ? !!options.captureCSSBackground : false;
+  const captureExtension =
+    isOptionsObject && options.extension && typeof options.extension === 'object' ? options.extension : null;
 
   p.captureFilePrefix = prefix || p.captureFilePrefix || 'capture';
   p.captureEnabled = enabled;
   p.captureCSSBackground = captureCSSBackground;
+  p.captureExtension = captureExtension;
 
   p.capturedFrames = [];
   p.frameNumber = 0;
@@ -19,6 +22,9 @@ export default function initCapture(p, options = {}) {
     const frameNum = p.frameNumber++;
 
     if (p.captureCSSBackground) {
+      if (typeof p.captureExtension?.captureFrameWithBackground === 'function') {
+        return p.captureExtension.captureFrameWithBackground(p, canvasElt, frameNum);
+      }
       return p.captureFrameWithBackground(canvasElt, frameNum);
     }
 
@@ -79,6 +85,8 @@ export default function initCapture(p, options = {}) {
 
     if (p.capturedFrames.length > 0) {
       await p.downloadFramesPart();
+    } else {
+      console.error('Capture finished with 0 frames; check console for earlier errors.');
     }
 
     p.captureInProgress = false;
@@ -120,18 +128,31 @@ export default function initCapture(p, options = {}) {
 
     console.log(`Generating ZIP part ${p.zipPartNumber}...`);
 
-    const zipBlob = await zip.generateAsync({ 
-      type: 'blob'
-    });
-    
+    let zipBlob;
+    try {
+      zipBlob = await zip.generateAsync({ type: 'blob' });
+    } catch (err) {
+      console.error('Capture: ZIP generation failed:', err);
+      throw err;
+    }
+
     const url = URL.createObjectURL(zipBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${p.captureFilePrefix}_frames_part${p.zipPartNumber}_${p.captureTimestamp}.zip`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 100);
+    const name = `${p.captureFilePrefix}_frames_part${p.zipPartNumber}_${p.captureTimestamp}.zip`;
+    try {
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = name;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      requestAnimationFrame(() => {
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      });
+    } catch (err) {
+      console.error('Capture: download click failed, opening blob URL in a new tab (save manually):', err);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
 
     console.log(`Downloaded ZIP part ${p.zipPartNumber}`);
     
