@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import inject from '@rollup/plugin-inject';
+import { astroAnimationsScssPrepend } from '@labcat2020/animation-lab/vite';
 
 // https://astro.build/config
 export default defineConfig({
@@ -30,7 +31,7 @@ export default defineConfig({
     css: {
       preprocessorOptions: {
         scss: {
-          additionalData: `@import "@styles/mixins/breakpoints.scss";`,
+          additionalData: astroAnimationsScssPrepend(),
           silenceDeprecations: ['import', 'global-builtin']
         }
       }
